@@ -276,6 +276,29 @@ Storage TTL renewal and the traversal ceiling are likewise covered by tests, inc
 
 ---
 
+## 📋 Deployed Contract Addresses (Standalone Network)
+
+Latest deployment on `stellar/quickstart:future` standalone network:
+
+| Contract | Address |
+|---|---|
+| `grid_topology` | `CACI6MVT43PFJSYB6S6MRJMDAD5ESQ24UIUE2WOLFFA2O62UOGMV4R2M` |
+| `account_ledger` | `CBVTI37HITOGPSEJAWDETW6WXV5AV6HATFZZYNGBWDKJFJUVUU3ANHEO` |
+| `micro_billing` | `CCSENFWA5YLZFHLLYHA4ZJSWYEMPDERN22CFG3FRILX62Z2NDFZYJEMY` |
+| `delinquency_disconnector` | `CB27GM4CUFQJVKMWY6AQU34XUM22SW5UY4RXOV2FTTC5K3LI7KZUAIQ7` |
+| `yield_auction` | `CA77OTMMRQFMBRM43IAV63U42TYCC3MOBAFW3W7QVGZAZBMS7GV2ZLIB` |
+| `peak_load_adjuster` | `CAECSXJT7PMR2YQXSOIOXAD34V2X3JDXOTBFHQAAZNC4TVMEIWDMM7MX` |
+| `battery_pool` | `CBPLRVACDTUYB7XMDE27FZL23WJ2WEQWEEJJUGM35UQV4CUNJWYXKILG` |
+| `community_capital` | `CAQU2ZHYZWFFJRDESEYVDXYT27GBZ6CKRWLYZEUKYMI3V7P5XPMIP3MS` |
+| `iot_registrar` | `CCUGHSDBNAGTBFDECRKERAWXUDCLFIDM4X6OB73GZ2H44QLFZWHK3QEJ` |
+| `cryptographic_oracle` | `CCZZTDOYPMZRU6FYBJIOAX7WIOEFKWDCNOEM7ONF2IAXEEZOWI4PHANF` |
+| `firmware_verifier` | `CDETI5MUCLSQCH5VTSTH2DNR2GVR2GJ77KVQUEHSYURPJ2A7L42L63EV` |
+| `hardware_slash` | `CAPG74I4YQQTRRYLLDAR6YABOU4XANECXRDQTMEECZNEMCC2Z2FDHFPD` |
+
+These addresses are also auto-generated in `solnet-frontend/src/lib/deployed-contracts.ts` by `deploy.sh` and used as fallbacks in the frontend.
+
+---
+
 ## ⚠️ Build Notes
 
 Three version constraints are load-bearing. Breaking any one of them stops the workspace from compiling or deploying.
