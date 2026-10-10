@@ -320,3 +320,9 @@ The release profile keeps `overflow-checks = true` on purpose. Every contract pe
 - **Predictable Microtransactions** — Real-time hardware telemetry updates demand hundreds of state transitions. Stellar's low base transaction costs keep real-world operations viable.
 - **Native Authentication** — Leveraging Soroban's native `require_auth` patterns guarantees that telemetry payloads cannot be spoofed, directly mirroring hardware identity on-chain.
 - **State Archival Execution** — Utilizing Soroban's unique storage lease mechanics ensures that closed grid instances can be safely archived, preventing state bloat and saving gas.
+
+---
+
+## 📄 License
+
+This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
