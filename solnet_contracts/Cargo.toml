@@ -15,3 +15,25 @@ members = [
     "hardware_slash",
     "integration_tests",
 ]
+
+# Release profile required by `stellar contract build`. The Soroban VM validates
+# contract modules against MVP WebAssembly and rejects anything carrying
+# post-MVP opcodes, so the build target is `wasm32v1-none` rather than
+# `wasm32-unknown-unknown`.
+#
+# `overflow-checks` stays ON deliberately: every contract here does signed
+# 128-bit arithmetic over balances and prices, and a silently wrapped
+# multiplication is a fund-loss bug rather than a panic.
+[profile.release]
+opt-level = "z"
+overflow-checks = true
+debug = false
+strip = "symbols"
+debug-assertions = false
+codegen-units = 1
+lto = true
+panic = "abort"
+incremental = false
+
+[profile.release.package."*"]
+opt-level = "z"

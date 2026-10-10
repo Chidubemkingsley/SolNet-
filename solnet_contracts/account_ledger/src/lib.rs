@@ -3,7 +3,7 @@
 
 #![no_std]
 
-use soroban_sdk::{contract, contracterror, contractimpl, symbol_short, Address, Env};
+use soroban_sdk::{contract, contracterror, contractimpl, symbol_short, Address, Env, Symbol};
 
 /// Number of decimal places the Watt-credit conversion rate is scaled by.
 /// Mirrors the sub-unit precision of the fiat-pegged stablecoins used by the
@@ -48,6 +48,7 @@ impl AccountLedger {
         env.storage()
             .instance()
             .set(&symbol_short!("rate"), &watts_per_unit);
+        Self::bump_instance(&env);
         Ok(())
     }
 
@@ -86,6 +87,8 @@ impl AccountLedger {
         env.storage()
             .persistent()
             .set(&(symbol_short!("wat"), account.clone()), &watts);
+        Self::bump(&env, &(symbol_short!("bal"), account.clone()));
+        Self::bump(&env, &(symbol_short!("wat"), account.clone()));
         Ok(minted)
     }
 
@@ -124,6 +127,8 @@ impl AccountLedger {
         env.storage()
             .persistent()
             .set(&(symbol_short!("wat"), account.clone()), &(watts - credits));
+        Self::bump(&env, &(symbol_short!("bal"), account.clone()));
+        Self::bump(&env, &(symbol_short!("wat"), account.clone()));
         Ok(amount)
     }
 
@@ -150,6 +155,7 @@ impl AccountLedger {
         env.storage()
             .persistent()
             .set(&(symbol_short!("wat"), account.clone()), &next);
+        Self::bump(&env, &(symbol_short!("wat"), account.clone()));
         Ok(next)
     }
 
@@ -165,7 +171,8 @@ impl AccountLedger {
         }
         env.storage()
             .persistent()
-            .set(&(symbol_short!("rtr"), router), &true);
+            .set(&(symbol_short!("rtr"), router.clone()), &true);
+        Self::bump(&env, &(symbol_short!("rtr"), router));
         Ok(())
     }
 
@@ -214,7 +221,8 @@ impl AccountLedger {
             .ok_or(Error::ArithmeticOverflow)?;
         env.storage()
             .persistent()
-            .set(&(symbol_short!("wat"), account), &next);
+            .set(&(symbol_short!("wat"), account.clone()), &next);
+        Self::bump(&env, &(symbol_short!("wat"), account));
         Ok(next)
     }
 
@@ -247,6 +255,33 @@ impl AccountLedger {
             .instance()
             .get(&symbol_short!("rate"))
             .unwrap_or(0))
+    }
+
+    /// Extends the ledger lifetime of a persistent entry that has just been
+    /// written. Deriving both bounds from the network maximum keeps the
+    /// renewal policy adaptive: an entry is renewed once less than half of its
+    /// life remains and is restored to the full maximum, and nothing has to be
+    /// configured at initialization.
+    fn bump(env: &Env, key: &(Symbol, Address)) {
+        let max = env.storage().max_ttl();
+        if max == 0 {
+            return;
+        }
+        env.storage().persistent().extend_ttl(key, max / 2, max);
+    }
+
+    /// Extends the ledger lifetime of the contract instance that has just been
+    /// written. Deriving both bounds from the network maximum keeps the
+    /// renewal policy adaptive: the configuration is renewed once less than half
+    /// of its life remains and is restored to the full maximum, and nothing has
+    /// to be configured at initialization. Instance storage expires as a single
+    /// ledger entry, so one renewal covers every key written by the caller.
+    fn bump_instance(env: &Env) {
+        let max = env.storage().max_ttl();
+        if max == 0 {
+            return;
+        }
+        env.storage().instance().extend_ttl(max / 2, max);
     }
 
     fn require_admin(env: &Env) -> Result<Address, Error> {

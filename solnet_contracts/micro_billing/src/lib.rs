@@ -54,6 +54,7 @@ impl MicroBilling {
         env.storage()
             .instance()
             .set(&symbol_short!("price"), &price_per_mwh);
+        Self::bump_instance(&env);
         Ok(())
     }
 
@@ -103,6 +104,7 @@ impl MicroBilling {
         }
         env.storage().instance().set(&symbol_short!("ledg"), &ledger);
         env.storage().instance().set(&symbol_short!("rat"), &rate);
+        Self::bump_instance(&env);
         Ok(())
     }
 
@@ -144,10 +146,12 @@ impl MicroBilling {
                     return Err(Error::NodeMismatch);
                 }
             }
-            None => env
-                .storage()
-                .persistent()
-                .set(&(symbol_short!("node"), account.clone()), &node_id),
+            None => {
+                env.storage()
+                    .persistent()
+                    .set(&(symbol_short!("node"), account.clone()), &node_id);
+                Self::bump(&env, &(symbol_short!("node"), account.clone()));
+            }
         }
 
         let charge = milli_wh
@@ -173,6 +177,9 @@ impl MicroBilling {
         env.storage()
             .persistent()
             .set(&(symbol_short!("nnc"), account.clone(), nonce), &true);
+        Self::bump(&env, &(symbol_short!("bal"), account.clone()));
+        Self::bump(&env, &(symbol_short!("cnt"), account.clone()));
+        Self::bump_nonce(&env, &(symbol_short!("nnc"), account, nonce));
         Ok(charge)
     }
 
@@ -190,7 +197,8 @@ impl MicroBilling {
 
         env.storage()
             .persistent()
-            .set(&(symbol_short!("bal"), account), &0i128);
+            .set(&(symbol_short!("bal"), account.clone()), &0i128);
+        Self::bump(&env, &(symbol_short!("bal"), account));
         Ok(unsettled)
     }
 
@@ -231,6 +239,43 @@ impl MicroBilling {
             .instance()
             .get(&symbol_short!("price"))
             .unwrap_or(0))
+    }
+
+    /// Extends the ledger lifetime of a persistent entry that has just been
+    /// written. Deriving both bounds from the network maximum keeps the
+    /// renewal policy adaptive: an entry is renewed once less than half of its
+    /// life remains and is restored to the full maximum, and nothing has to be
+    /// configured at initialization.
+    fn bump(env: &Env, key: &(Symbol, Address)) {
+        let max = env.storage().max_ttl();
+        if max == 0 {
+            return;
+        }
+        env.storage().persistent().extend_ttl(key, max / 2, max);
+    }
+
+    /// Extends the ledger lifetime of the contract instance that has just been
+    /// written. Deriving both bounds from the network maximum keeps the
+    /// renewal policy adaptive: the configuration is renewed once less than half
+    /// of its life remains and is restored to the full maximum, and nothing has
+    /// to be configured at initialization. Instance storage expires as a single
+    /// ledger entry, so one renewal covers every key written by the caller.
+    fn bump_instance(env: &Env) {
+        let max = env.storage().max_ttl();
+        if max == 0 {
+            return;
+        }
+        env.storage().instance().extend_ttl(max / 2, max);
+    }
+
+    /// Same renewal as `bump` for the three-part nonce replay-guard keys,
+    /// which are keyed by account and nonce rather than by account alone.
+    fn bump_nonce(env: &Env, key: &(Symbol, Address, u64)) {
+        let max = env.storage().max_ttl();
+        if max == 0 {
+            return;
+        }
+        env.storage().persistent().extend_ttl(key, max / 2, max);
     }
 
     fn charge_ledger(env: &Env, account: &Address, charge: i128) -> Result<(), Error> {

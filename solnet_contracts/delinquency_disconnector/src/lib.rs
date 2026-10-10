@@ -59,6 +59,7 @@ impl DelinquencyDisconnector {
         env.storage()
             .instance()
             .set(&symbol_short!("grace"), &grace_period);
+        Self::bump_instance(&env);
         Ok(())
     }
 
@@ -102,7 +103,9 @@ impl DelinquencyDisconnector {
             .set(&(symbol_short!("dln"), account.clone()), &true);
         env.storage()
             .persistent()
-            .set(&(symbol_short!("seq"), account), &ledger_seq);
+            .set(&(symbol_short!("seq"), account.clone()), &ledger_seq);
+        Self::bump(&env, &(symbol_short!("dln"), account.clone()));
+        Self::bump(&env, &(symbol_short!("seq"), account));
         Ok(())
     }
 
@@ -124,6 +127,7 @@ impl DelinquencyDisconnector {
             return Err(Error::LedgerCallFailed);
         }
         env.storage().instance().set(&symbol_short!("ledg"), &ledger);
+        Self::bump_instance(&env);
         Ok(())
     }
 
@@ -176,6 +180,8 @@ impl DelinquencyDisconnector {
                 env.storage()
                     .persistent()
                     .set(&(symbol_short!("seq"), account.clone()), &current_seq);
+                Self::bump(&env, &(symbol_short!("dln"), account.clone()));
+                Self::bump(&env, &(symbol_short!("seq"), account.clone()));
             }
         } else if Self::is_delinquent_of(&env, &account) {
             env.storage()
@@ -265,7 +271,9 @@ impl DelinquencyDisconnector {
             .set(&(symbol_short!("dln"), account.clone()), &false);
         env.storage()
             .persistent()
-            .set(&(symbol_short!("seq"), account), &0u64);
+            .set(&(symbol_short!("seq"), account.clone()), &0u64);
+        Self::bump(&env, &(symbol_short!("dln"), account.clone()));
+        Self::bump(&env, &(symbol_short!("seq"), account));
         Ok(())
     }
 
@@ -295,6 +303,35 @@ impl DelinquencyDisconnector {
         } else {
             Err(Error::NotAdmin)
         }
+    }
+
+    /// Extends the ledger lifetime of a persistent entry that has just been
+    /// written. Deriving both bounds from the network maximum keeps the
+    /// renewal policy adaptive: an entry is renewed once less than half of its
+    /// life remains and is restored to the full maximum, and nothing has to be
+    /// configured at initialization. The delinquency mark is renewed on write
+    /// but never on read, so an untouched account's grace clock still runs down
+    /// toward disconnection instead of being kept alive indefinitely.
+    fn bump(env: &Env, key: &(Symbol, Address)) {
+        let max = env.storage().max_ttl();
+        if max == 0 {
+            return;
+        }
+        env.storage().persistent().extend_ttl(key, max / 2, max);
+    }
+
+    /// Extends the ledger lifetime of the contract instance that has just been
+    /// written. Deriving both bounds from the network maximum keeps the
+    /// renewal policy adaptive: the configuration is renewed once less than half
+    /// of its life remains and is restored to the full maximum, and nothing has
+    /// to be configured at initialization. Instance storage expires as a single
+    /// ledger entry, so one renewal covers every key written by the caller.
+    fn bump_instance(env: &Env) {
+        let max = env.storage().max_ttl();
+        if max == 0 {
+            return;
+        }
+        env.storage().instance().extend_ttl(max / 2, max);
     }
 
     fn require_admin(env: &Env) -> Result<Address, Error> {

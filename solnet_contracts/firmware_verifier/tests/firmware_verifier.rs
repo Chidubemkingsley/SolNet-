@@ -1,5 +1,12 @@
-use soroban_sdk::{testutils::Address as _, Address, Bytes, BytesN, Env};
 use solnet_firmware_verifier::{Error, FirmwareVerifier, FirmwareVerifierClient, Verdict};
+use soroban_sdk::{
+    symbol_short,
+    testutils::{
+        storage::{Instance as _, Persistent as _},
+        Address as _, Ledger as _,
+    },
+    Address, Bytes, BytesN, Env, Symbol,
+};
 
 fn setup() -> (Env, Address, FirmwareVerifierClient<'static>) {
     let e = Env::default();
@@ -9,6 +16,41 @@ fn setup() -> (Env, Address, FirmwareVerifierClient<'static>) {
     let client = FirmwareVerifierClient::new(&e, &id);
     client.init(&admin);
     (e, admin, client)
+}
+
+/// Mirrors `setup` but also hands back the contract address, which the
+/// lifetime assertions below need in order to inspect contract storage.
+fn setup_tracked() -> (Env, Address, Address, FirmwareVerifierClient<'static>) {
+    let e = Env::default();
+    e.mock_all_auths();
+    let admin = Address::generate(&e);
+    let id = e.register(FirmwareVerifier, ());
+    let client = FirmwareVerifierClient::new(&e, &id);
+    client.init(&admin);
+    (e, admin, id, client)
+}
+
+fn network_max_ttl(e: &Env, id: &Address) -> u32 {
+    e.as_contract(id, || e.storage().max_ttl())
+}
+
+fn entry_ttl(e: &Env, id: &Address, key: &(Symbol, BytesN<32>)) -> u32 {
+    e.as_contract(id, || e.storage().persistent().get_ttl(key))
+}
+
+fn tagged_ttl(e: &Env, id: &Address, tag: &str, key: &BytesN<32>) -> u32 {
+    entry_ttl(e, id, &(Symbol::new(e, tag), key.clone()))
+}
+
+fn instance_ttl(e: &Env, id: &Address) -> u32 {
+    e.as_contract(id, || e.storage().instance().get_ttl())
+}
+
+/// Writes an approval flag straight past the contract, with no renewal behind
+/// it, so the assertions below can tell a bumped entry apart from one that
+/// merely happens to exist.
+fn seed_unrenewed(e: &Env, id: &Address, key: &(Symbol, BytesN<32>), value: bool) {
+    e.as_contract(id, || e.storage().persistent().set(key, &value));
 }
 
 fn hash(env: &Env, seed: u8) -> BytesN<32> {
@@ -255,4 +297,101 @@ fn non_admin_cannot_mutate_registry_but_admin_still_can() {
 
     client.approve_firmware(&admin, &h, &1, &1);
     assert_eq!(client.latest_version(), 1);
+}
+#[test]
+fn approving_a_build_renews_the_lifetime_of_every_registry_entry() {
+    let (e, admin, id, client) = setup_tracked();
+    let h = hash(&e, 0xC1);
+    let untouched = hash(&e, 0xC2);
+    let max = network_max_ttl(&e, &id);
+    assert!(max > 0);
+    let floor = e.ledger().get().min_persistent_entry_ttl;
+
+    seed_unrenewed(&e, &id, &(symbol_short!("apr"), untouched.clone()), true);
+    assert!(entry_ttl(&e, &id, &(symbol_short!("apr"), untouched.clone())) <= floor);
+
+    client.approve_firmware(&admin, &h, &3, &2);
+    for tag in ["apr", "rvk", "ver", "mnv", "sc"] {
+        let renewed = tagged_ttl(&e, &id, tag, &h);
+        assert_eq!(renewed, max, "entry {} was not renewed", tag);
+        assert!(renewed > floor, "entry {} did not outlive the floor", tag);
+    }
+
+    assert!(entry_ttl(&e, &id, &(symbol_short!("apr"), untouched)) <= floor);
+}
+
+#[test]
+fn revoking_a_build_renews_the_lifetime_of_the_registry_entries() {
+    let (e, admin, id, client) = setup_tracked();
+    let h = hash(&e, 0xC3);
+    client.approve_firmware(&admin, &h, &4, &4);
+    let max = network_max_ttl(&e, &id);
+
+    client.revoke_firmware(&admin, &h);
+    assert_eq!(client.verdict_of(&h), Verdict::Revoked);
+    for tag in ["apr", "rvk"] {
+        let renewed = tagged_ttl(&e, &id, tag, &h);
+        assert_eq!(renewed, max, "entry {} was not renewed", tag);
+        assert!(renewed > e.ledger().get().min_persistent_entry_ttl);
+    }
+}
+
+#[test]
+fn reporting_a_device_renews_the_lifetime_of_every_device_entry() {
+    let (e, admin, id, client) = setup_tracked();
+    let h = hash(&e, 0xC4);
+    let fresh = hash(&e, 0xC5);
+    let device = hash(&e, 0x11);
+    let untouched = hash(&e, 0x12);
+    client.approve_firmware(&admin, &h, &3, &3);
+    client.approve_firmware(&admin, &fresh, &2, &2);
+    let max = network_max_ttl(&e, &id);
+    let floor = e.ledger().get().min_persistent_entry_ttl;
+
+    seed_unrenewed(&e, &id, &(symbol_short!("dig"), untouched.clone()), false);
+    assert!(entry_ttl(&e, &id, &(symbol_short!("dig"), untouched.clone())) <= floor);
+
+    client.report_device(&admin, &device, &h, &1);
+    assert_eq!(client.stale_report_count(&h), 1);
+    for tag in ["dv", "dig"] {
+        let renewed = tagged_ttl(&e, &id, tag, &device);
+        assert_eq!(renewed, max, "entry {} was not renewed", tag);
+        assert!(renewed > floor, "entry {} did not outlive the floor", tag);
+    }
+    let stale_tally = tagged_ttl(&e, &id, "sc", &h);
+    assert_eq!(stale_tally, max, "entry sc was not renewed");
+    assert!(stale_tally > floor, "entry sc did not outlive the floor");
+    assert!(entry_ttl(&e, &id, &(symbol_short!("dig"), untouched)) <= floor);
+}
+
+#[test]
+fn every_write_path_renews_the_lifetime_of_the_contract_instance() {
+    let (e, admin, id, client) = setup_tracked();
+    let max = network_max_ttl(&e, &id);
+    assert!(max > 0);
+    assert_eq!(instance_ttl(&e, &id), max);
+
+    client.approve_firmware(&admin, &hash(&e, 0xC6), &5, &3);
+    let renewed = instance_ttl(&e, &id);
+    assert_eq!(renewed, max);
+    assert!(renewed > e.ledger().get().min_persistent_entry_ttl);
+}
+
+#[test]
+fn an_approval_restores_a_decayed_contract_instance() {
+    let (e, admin, id, client) = setup_tracked();
+    let max = network_max_ttl(&e, &id);
+
+    e.ledger().with_mut(|l| l.sequence_number += max / 2 + 1);
+    let decayed = instance_ttl(&e, &id);
+    assert!(decayed < max);
+    assert_eq!(client.latest_version(), 0);
+
+    let h = hash(&e, 0xC7);
+    client.approve_firmware(&admin, &h, &6, &2);
+    assert_eq!(client.latest_version(), 6);
+    assert_eq!(client.floor_version(), 2);
+    let renewed = instance_ttl(&e, &id);
+    assert_eq!(renewed, max);
+    assert!(renewed > decayed);
 }

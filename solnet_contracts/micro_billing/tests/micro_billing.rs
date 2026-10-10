@@ -1,5 +1,25 @@
 use solnet_micro_billing::{Error, MicroBilling, MicroBillingClient};
-use soroban_sdk::{testutils::Address as _, vec, Address, Env};
+use soroban_sdk::{
+    contract, contractimpl, symbol_short,
+    testutils::{storage::Instance as _, storage::Persistent as _, Address as _, Ledger as _},
+    vec, Address, Env, Symbol,
+};
+
+/// Stand-in for a wired account ledger, so the tests can drive `wire` down its
+/// instance-writing path without depending on another contract crate.
+#[contract]
+pub struct StubLedger;
+
+#[contractimpl]
+impl StubLedger {
+    pub fn rate(_env: Env) -> i128 {
+        1_000_000
+    }
+
+    pub fn is_router(_env: Env, _router: Address) -> bool {
+        true
+    }
+}
 
 fn setup_with_price(price_per_mwh: i128) -> (Env, Address, MicroBillingClient<'static>) {
     let e = Env::default();
@@ -13,6 +33,34 @@ fn setup_with_price(price_per_mwh: i128) -> (Env, Address, MicroBillingClient<'s
 
 fn setup() -> (Env, Address, MicroBillingClient<'static>) {
     setup_with_price(250)
+}
+
+/// Mirrors `setup` but also hands back the contract address, which the
+/// lifetime assertions below need in order to inspect contract storage.
+fn setup_tracked() -> (Env, Address, Address, MicroBillingClient<'static>) {
+    let e = Env::default();
+    e.mock_all_auths();
+    let admin = Address::generate(&e);
+    let id = e.register(MicroBilling, ());
+    let client = MicroBillingClient::new(&e, &id);
+    client.init(&admin, &250);
+    (e, admin, id, client)
+}
+
+fn network_max_ttl(e: &Env, id: &Address) -> u32 {
+    e.as_contract(id, || e.storage().max_ttl())
+}
+
+fn entry_ttl(e: &Env, id: &Address, key: &(Symbol, Address)) -> u32 {
+    e.as_contract(id, || e.storage().persistent().get_ttl(key))
+}
+
+fn nonce_ttl(e: &Env, id: &Address, key: &(Symbol, Address, u64)) -> u32 {
+    e.as_contract(id, || e.storage().persistent().get_ttl(key))
+}
+
+fn instance_ttl(e: &Env, id: &Address) -> u32 {
+    e.as_contract(id, || e.storage().instance().get_ttl())
 }
 
 #[test]
@@ -352,4 +400,107 @@ fn record_accrues_charges_while_no_ledger_is_wired() {
             Err(Ok(Error::InvalidReading))
         );
     }
+}
+
+#[test]
+fn record_renews_the_lifetime_of_every_entry_it_writes() {
+    let (e, _admin, id, client) = setup_tracked();
+    let account = Address::generate(&e);
+    client.record(&account, &7, &1_500, &42);
+    let max = network_max_ttl(&e, &id);
+    assert!(max > 0);
+
+    assert_eq!(
+        entry_ttl(&e, &id, &(symbol_short!("node"), account.clone())),
+        max
+    );
+    assert_eq!(
+        entry_ttl(&e, &id, &(symbol_short!("bal"), account.clone())),
+        max
+    );
+    assert_eq!(
+        entry_ttl(&e, &id, &(symbol_short!("cnt"), account.clone())),
+        max
+    );
+    assert_eq!(
+        nonce_ttl(&e, &id, &(symbol_short!("nnc"), account.clone(), 42)),
+        max
+    );
+
+    client.record(&account, &7, &1_500, &43);
+    assert_eq!(
+        entry_ttl(&e, &id, &(symbol_short!("node"), account.clone())),
+        max
+    );
+    assert_eq!(
+        entry_ttl(&e, &id, &(symbol_short!("bal"), account.clone())),
+        max
+    );
+    assert_eq!(
+        entry_ttl(&e, &id, &(symbol_short!("cnt"), account.clone())),
+        max
+    );
+    assert_eq!(
+        nonce_ttl(&e, &id, &(symbol_short!("nnc"), account.clone(), 43)),
+        max
+    );
+}
+
+#[test]
+fn settle_renews_the_lifetime_of_the_unsettled_balance_entry() {
+    let (e, _admin, id, client) = setup_tracked();
+    let account = Address::generate(&e);
+    client.record(&account, &7, &1_500, &42);
+    let max = network_max_ttl(&e, &id);
+
+    client.settle(&account);
+    assert_eq!(
+        entry_ttl(&e, &id, &(symbol_short!("bal"), account.clone())),
+        max
+    );
+    assert_eq!(client.unsettled(&account), 0);
+}
+
+#[test]
+fn init_renews_the_lifetime_of_the_contract_instance() {
+    let (e, admin, id, client) = setup_tracked();
+    let max = network_max_ttl(&e, &id);
+    assert!(max > 0);
+
+    let renewed = instance_ttl(&e, &id);
+    assert_eq!(renewed, max);
+    assert!(renewed > e.ledger().get().min_persistent_entry_ttl);
+    assert_eq!(client.admin(), admin);
+    assert_eq!(client.price(), 250);
+}
+
+#[test]
+fn wiring_renews_the_lifetime_of_the_contract_instance() {
+    let (e, admin, id, client) = setup_tracked();
+    let ledger_id = e.register(StubLedger, ());
+    let max = network_max_ttl(&e, &id);
+
+    client.wire(&admin, &ledger_id);
+    let renewed = instance_ttl(&e, &id);
+    assert_eq!(renewed, max);
+    assert!(renewed > e.ledger().get().min_persistent_entry_ttl);
+    assert_eq!(client.ledger(), Some(ledger_id));
+}
+
+#[test]
+fn a_wiring_write_restores_a_decayed_contract_instance() {
+    let (e, admin, id, client) = setup_tracked();
+    let max = network_max_ttl(&e, &id);
+
+    e.ledger().with_mut(|l| l.sequence_number += max / 2 + 1);
+    let decayed = instance_ttl(&e, &id);
+    assert!(decayed < max);
+    assert_eq!(client.price(), 250);
+
+    let ledger_id = e.register(StubLedger, ());
+    client.wire(&admin, &ledger_id);
+    let renewed = instance_ttl(&e, &id);
+    assert_eq!(renewed, max);
+    assert!(renewed > decayed);
+    assert!(renewed > e.ledger().get().min_persistent_entry_ttl);
 }

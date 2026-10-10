@@ -8,7 +8,7 @@
 
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, Address, Bytes, BytesN, Env,
-    Vec,
+    IntoVal, Val, Vec,
 };
 
 #[contracterror]
@@ -70,6 +70,7 @@ impl CryptographicOracle {
         admin.require_auth();
         env.storage().instance().set(&symbol_short!("admin"), &admin);
         env.storage().instance().set(&symbol_short!("count"), &0u32);
+        Self::bump_instance(&env);
         Ok(())
     }
 
@@ -135,7 +136,8 @@ impl CryptographicOracle {
         };
         env.storage()
             .persistent()
-            .set(&(symbol_short!("bat"), batch_id), &record);
+            .set(&(symbol_short!("bat"), batch_id.clone()), &record);
+        Self::bump(&env, &(symbol_short!("bat"), batch_id));
 
         let count: u32 = env
             .storage()
@@ -145,6 +147,7 @@ impl CryptographicOracle {
         env.storage()
             .instance()
             .set(&symbol_short!("count"), &(count + 1));
+        Self::bump_instance(&env);
         Ok(())
     }
 
@@ -164,7 +167,8 @@ impl CryptographicOracle {
         record.settled = true;
         env.storage()
             .persistent()
-            .set(&(symbol_short!("bat"), batch_id), &record);
+            .set(&(symbol_short!("bat"), batch_id.clone()), &record);
+        Self::bump(&env, &(symbol_short!("bat"), batch_id));
         Ok(())
     }
 
@@ -248,5 +252,30 @@ impl CryptographicOracle {
         }
         admin.require_auth();
         Ok(())
+    }
+
+    /// Extends the ledger lifetime of a persistent entry that has just been
+    /// written. Deriving both bounds from the network maximum keeps the
+    /// renewal policy adaptive: an entry is renewed once less than half of its
+    /// life remains and is restored to the full maximum, and nothing has to be
+    /// configured at initialization.
+    fn bump<K: IntoVal<Env, Val>>(env: &Env, key: &K) {
+        let max = env.storage().max_ttl();
+        if max > 0 {
+            env.storage().persistent().extend_ttl(key, max / 2, max);
+        }
+    }
+
+    /// Extends the ledger lifetime of the contract instance that has just been
+    /// written. Deriving both bounds from the network maximum keeps the
+    /// renewal policy adaptive: the configuration is renewed once less than half
+    /// of its life remains and is restored to the full maximum, and nothing has
+    /// to be configured at initialization. Instance storage expires as a single
+    /// ledger entry, so one renewal covers every key written by the caller.
+    fn bump_instance(env: &Env) {
+        let max = env.storage().max_ttl();
+        if max > 0 {
+            env.storage().instance().extend_ttl(max / 2, max);
+        }
     }
 }

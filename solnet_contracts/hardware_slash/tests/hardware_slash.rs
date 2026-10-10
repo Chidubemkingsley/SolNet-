@@ -1,5 +1,12 @@
-use soroban_sdk::{testutils::Address as _, Address, Env};
 use solnet_hardware_slash::{Error, HardwareSlash, HardwareSlashClient, Offence};
+use soroban_sdk::{
+    symbol_short,
+    testutils::{
+        storage::{Instance as _, Persistent as _},
+        Address as _, Ledger as _,
+    },
+    Address, Env,
+};
 
 fn setup(burn_bps: i128) -> (Env, Address, Address, HardwareSlashClient<'static>) {
     let e = Env::default();
@@ -10,6 +17,75 @@ fn setup(burn_bps: i128) -> (Env, Address, Address, HardwareSlashClient<'static>
     let client = HardwareSlashClient::new(&e, &id);
     client.init(&admin, &burn_bps);
     (e, admin, operator, client)
+}
+
+/// Mirrors `setup` but also hands back the contract address, which the
+/// lifetime assertions below need in order to inspect contract storage.
+fn setup_tracked(
+    burn_bps: i128,
+) -> (Env, Address, Address, Address, HardwareSlashClient<'static>) {
+    let e = Env::default();
+    e.mock_all_auths();
+    let admin = Address::generate(&e);
+    let operator = Address::generate(&e);
+    let id = e.register(HardwareSlash, ());
+    let client = HardwareSlashClient::new(&e, &id);
+    client.init(&admin, &burn_bps);
+    (e, admin, operator, id, client)
+}
+
+fn network_max_ttl(e: &Env, id: &Address) -> u32 {
+    e.as_contract(id, || e.storage().max_ttl())
+}
+
+fn collateral_ttl(e: &Env, id: &Address, owner: &Address) -> u32 {
+    e.as_contract(id, || {
+        e.storage()
+            .persistent()
+            .get_ttl(&(symbol_short!("col"), owner.clone()))
+    })
+}
+
+fn appeal_ttl(e: &Env, id: &Address, owner: &Address, offence: Offence) -> u32 {
+    let code: u32 = match offence {
+        Offence::SpoofedGeneration => 1,
+        Offence::RouterBypass => 2,
+    };
+    e.as_contract(id, || {
+        e.storage()
+            .persistent()
+            .get_ttl(&(symbol_short!("ap"), owner.clone(), code))
+    })
+}
+
+fn instance_ttl(e: &Env, id: &Address) -> u32 {
+    e.as_contract(id, || e.storage().instance().get_ttl())
+}
+
+/// Writes a collateral balance straight past the contract, with no renewal
+/// behind it, so the assertions below can tell a bumped entry apart from one
+/// that merely happens to exist.
+fn seed_unrenewed_collateral(e: &Env, id: &Address, owner: &Address, value: i128) {
+    e.as_contract(id, || {
+        e.storage()
+            .persistent()
+            .set(&(symbol_short!("col"), owner.clone()), &value)
+    });
+}
+
+/// Same contrast as `seed_unrenewed_collateral`, for the three-part appeal
+/// freeze keys, which are keyed by operator and offence code rather than by
+/// operator alone.
+fn seed_unrenewed_appeal(e: &Env, id: &Address, owner: &Address, offence: Offence) {
+    let code: u32 = match offence {
+        Offence::SpoofedGeneration => 1,
+        Offence::RouterBypass => 2,
+    };
+    e.as_contract(id, || {
+        e.storage()
+            .persistent()
+            .set(&(symbol_short!("ap"), owner.clone(), code), &true)
+    });
 }
 
 #[test]
@@ -258,4 +334,105 @@ fn collateral_never_goes_negative_across_many_slashes() {
     for owner in owners.iter() {
         assert_eq!(client.collateral_of(owner), 500);
     }
+}
+#[test]
+fn depositing_collateral_renews_the_lifetime_of_the_collateral_entry() {
+    let (e, _admin, operator, id, client) = setup_tracked(1_000);
+    let bystander = Address::generate(&e);
+    let max = network_max_ttl(&e, &id);
+    assert!(max > 0);
+    let floor = e.ledger().get().min_persistent_entry_ttl;
+
+    seed_unrenewed_collateral(&e, &id, &bystander, 9);
+    assert!(collateral_ttl(&e, &id, &bystander) <= floor);
+
+    client.deposit_collateral(&operator, &1_000);
+    let renewed = collateral_ttl(&e, &id, &operator);
+    assert_eq!(renewed, max);
+    assert!(renewed > floor);
+    assert!(collateral_ttl(&e, &id, &bystander) <= floor);
+
+    client.deposit_collateral(&operator, &500);
+    assert_eq!(client.collateral_of(&operator), 1_500);
+    assert_eq!(collateral_ttl(&e, &id, &operator), max);
+}
+
+#[test]
+fn slashing_renews_the_lifetime_of_the_collateral_and_marker_entries() {
+    let (e, admin, operator, id, client) = setup_tracked(2_500);
+    client.deposit_collateral(&operator, &1_000);
+    let max = network_max_ttl(&e, &id);
+
+    client.slash(&admin, &operator, &Offence::SpoofedGeneration);
+    assert!(client.was_slashed(&operator, &Offence::SpoofedGeneration));
+    let renewed = collateral_ttl(&e, &id, &operator);
+    assert_eq!(renewed, max);
+    assert!(renewed > e.ledger().get().min_persistent_entry_ttl);
+
+    let marker = e.as_contract(&id, || {
+        e.storage()
+            .persistent()
+            .get_ttl(&(symbol_short!("sl"), operator.clone(), 1u32))
+    });
+    assert_eq!(marker, max);
+    assert!(marker > e.ledger().get().min_persistent_entry_ttl);
+}
+
+#[test]
+fn raising_and_lifting_an_appeal_freeze_renews_the_lifetime_of_the_freeze_entry() {
+    let (e, admin, operator, id, client) = setup_tracked(1_000);
+    client.deposit_collateral(&operator, &1_000);
+    let other = Address::generate(&e);
+    let max = network_max_ttl(&e, &id);
+    let floor = e.ledger().get().min_persistent_entry_ttl;
+
+    client.appeal_window(&admin, &operator, &Offence::RouterBypass);
+    let frozen = appeal_ttl(&e, &id, &operator, Offence::RouterBypass);
+    assert_eq!(frozen, max);
+    assert!(frozen > floor);
+
+    seed_unrenewed_appeal(&e, &id, &operator, Offence::SpoofedGeneration);
+    assert!(appeal_ttl(&e, &id, &operator, Offence::SpoofedGeneration) <= floor);
+
+    client.resolve_appeal(&admin, &operator, &Offence::RouterBypass);
+    assert!(!client.is_appealed(&operator, &Offence::RouterBypass));
+    let lifted = appeal_ttl(&e, &id, &operator, Offence::RouterBypass);
+    assert_eq!(lifted, max);
+    assert!(lifted > floor);
+
+    client.appeal_window(&admin, &other, &Offence::RouterBypass);
+    assert_eq!(appeal_ttl(&e, &id, &other, Offence::RouterBypass), max);
+}
+
+#[test]
+fn every_write_path_renews_the_lifetime_of_the_contract_instance() {
+    let (e, admin, operator, id, client) = setup_tracked(1_000);
+    let max = network_max_ttl(&e, &id);
+    assert!(max > 0);
+    assert_eq!(instance_ttl(&e, &id), max);
+
+    client.deposit_collateral(&operator, &1_000);
+    assert_eq!(instance_ttl(&e, &id), max);
+
+    client.slash(&admin, &operator, &Offence::SpoofedGeneration);
+    let renewed = instance_ttl(&e, &id);
+    assert_eq!(renewed, max);
+    assert!(renewed > e.ledger().get().min_persistent_entry_ttl);
+}
+
+#[test]
+fn a_deposit_restores_a_decayed_contract_instance() {
+    let (e, _admin, operator, id, client) = setup_tracked(1_000);
+    let max = network_max_ttl(&e, &id);
+
+    e.ledger().with_mut(|l| l.sequence_number += max / 2 + 1);
+    let decayed = instance_ttl(&e, &id);
+    assert!(decayed < max);
+    assert_eq!(client.total_deposited(), 0);
+
+    client.deposit_collateral(&operator, &1_000);
+    assert_eq!(client.total_deposited(), 1_000);
+    let renewed = instance_ttl(&e, &id);
+    assert_eq!(renewed, max);
+    assert!(renewed > decayed);
 }

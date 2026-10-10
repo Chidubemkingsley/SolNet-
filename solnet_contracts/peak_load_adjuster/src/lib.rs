@@ -91,6 +91,7 @@ impl PeakLoadAdjuster {
         env.storage().instance().set(&symbol_short!("floor"), &floor_price);
         env.storage().instance().set(&symbol_short!("maxpx"), &max_price);
         env.storage().instance().set(&symbol_short!("soc"), &BPS_DENOM);
+        Self::bump(&env);
         Ok(())
     }
 
@@ -126,6 +127,7 @@ impl PeakLoadAdjuster {
             return Err(Error::InvalidSoc);
         }
         env.storage().instance().set(&symbol_short!("soc"), &soc_bps);
+        Self::bump(&env);
         Ok(())
     }
 
@@ -178,6 +180,7 @@ impl PeakLoadAdjuster {
             return Err(Error::InvalidMaxPrice);
         }
         env.storage().instance().set(&symbol_short!("maxpx"), &max_price);
+        Self::bump(&env);
         Ok(())
     }
 
@@ -214,5 +217,19 @@ impl PeakLoadAdjuster {
         }
         admin.require_auth();
         Ok(())
+    }
+
+    /// Extends the ledger lifetime of the contract instance that has just been
+    /// written. Deriving both bounds from the network maximum keeps the
+    /// renewal policy adaptive: the configuration is renewed once less than half
+    /// of its life remains and is restored to the full maximum, and nothing has
+    /// to be configured at initialization. Instance storage expires as a single
+    /// ledger entry, so one renewal covers every key written by the caller.
+    fn bump(env: &Env) {
+        let max = env.storage().max_ttl();
+        if max == 0 {
+            return;
+        }
+        env.storage().instance().extend_ttl(max / 2, max);
     }
 }

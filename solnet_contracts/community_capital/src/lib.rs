@@ -5,7 +5,9 @@
 
 #![no_std]
 
-use soroban_sdk::{contract, contracterror, contractimpl, symbol_short, Address, Env};
+use soroban_sdk::{
+    contract, contracterror, contractimpl, symbol_short, Address, Env, IntoVal, Val,
+};
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -58,6 +60,7 @@ impl CommunityCapital {
         env.storage()
             .instance()
             .set(&symbol_short!("lastq"), &NEVER_ACCRUED);
+        Self::bump_instance(&env);
         Ok(())
     }
 
@@ -106,13 +109,15 @@ impl CommunityCapital {
             .unwrap_or(0);
         let next_capital = capital.checked_add(amount).ok_or(Error::ArithmeticOverflow)?;
 
-env.storage()
+        env.storage()
             .persistent()
             .set(&(symbol_short!("sh"), investor.clone()), &next_held);
+        Self::bump(&env, &(symbol_short!("sh"), investor.clone()));
         if held == 0 {
             env.storage()
                 .persistent()
-                .set(&(symbol_short!("clmd"), investor), &Self::read_index(&env));
+                .set(&(symbol_short!("clmd"), investor.clone()), &Self::read_index(&env));
+            Self::bump(&env, &(symbol_short!("clmd"), investor));
         }
         env.storage()
             .instance()
@@ -120,6 +125,7 @@ env.storage()
         env.storage()
             .instance()
             .set(&symbol_short!("capl"), &next_capital);
+        Self::bump_instance(&env);
         Ok(shares)
     }
 
@@ -198,6 +204,7 @@ env.storage()
         env.storage()
             .instance()
             .set(&symbol_short!("indx"), &next_index);
+        Self::bump_instance(&env);
         Ok(dividend)
     }
 
@@ -245,7 +252,9 @@ env.storage()
             .set(&symbol_short!("unds"), &(undistributed - payout));
         env.storage()
             .persistent()
-            .set(&(symbol_short!("clmd"), investor), &entitled);
+            .set(&(symbol_short!("clmd"), investor.clone()), &entitled);
+        Self::bump(&env, &(symbol_short!("clmd"), investor));
+        Self::bump_instance(&env);
         Ok(payout)
     }
 
@@ -354,5 +363,30 @@ env.storage()
         }
         admin.require_auth();
         Ok(())
+    }
+
+    /// Extends the ledger lifetime of a persistent entry that has just been
+    /// written. Deriving both bounds from the network maximum keeps the
+    /// renewal policy adaptive: an entry is renewed once less than half of its
+    /// life remains and is restored to the full maximum, and nothing has to be
+    /// configured at initialization.
+    fn bump<K: IntoVal<Env, Val>>(env: &Env, key: &K) {
+        let max = env.storage().max_ttl();
+        if max > 0 {
+            env.storage().persistent().extend_ttl(key, max / 2, max);
+        }
+    }
+
+    /// Extends the ledger lifetime of the contract instance that has just been
+    /// written. Deriving both bounds from the network maximum keeps the
+    /// renewal policy adaptive: the configuration is renewed once less than half
+    /// of its life remains and is restored to the full maximum, and nothing has
+    /// to be configured at initialization. Instance storage expires as a single
+    /// ledger entry, so one renewal covers every key written by the caller.
+    fn bump_instance(env: &Env) {
+        let max = env.storage().max_ttl();
+        if max > 0 {
+            env.storage().instance().extend_ttl(max / 2, max);
+        }
     }
 }

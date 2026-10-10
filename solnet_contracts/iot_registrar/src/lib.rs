@@ -8,6 +8,7 @@
 
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, Address, BytesN, Env, String,
+    Symbol,
 };
 
 #[contracterror]
@@ -48,6 +49,7 @@ impl IotRegistrar {
         admin.require_auth();
         env.storage().instance().set(&symbol_short!("admin"), &admin);
         env.storage().instance().set(&symbol_short!("count"), &0u32);
+        Self::bump_instance(&env);
         Ok(())
     }
 
@@ -84,11 +86,13 @@ impl IotRegistrar {
         env.storage()
             .persistent()
             .set(&(symbol_short!("dev"), public_key.clone()), &device);
+        Self::bump(&env, &(symbol_short!("dev"), public_key.clone()));
 
         let version = Self::bump_version(&env, &public_key);
         env.storage()
             .persistent()
-            .set(&(symbol_short!("ver"), public_key), &version);
+            .set(&(symbol_short!("ver"), public_key.clone()), &version);
+        Self::bump(&env, &(symbol_short!("ver"), public_key));
 
         let count: u32 = env
             .storage()
@@ -98,6 +102,7 @@ impl IotRegistrar {
         env.storage()
             .instance()
             .set(&symbol_short!("count"), &(count + 1));
+        Self::bump_instance(&env);
         Ok(())
     }
 
@@ -119,7 +124,8 @@ impl IotRegistrar {
             .remove(&(symbol_short!("dev"), public_key.clone()));
         env.storage()
             .persistent()
-            .set(&(symbol_short!("rsn"), public_key), &reason);
+            .set(&(symbol_short!("rsn"), public_key.clone()), &reason);
+        Self::bump(&env, &(symbol_short!("rsn"), public_key));
 
         let count: u32 = env
             .storage()
@@ -129,6 +135,7 @@ impl IotRegistrar {
         env.storage()
             .instance()
             .set(&symbol_short!("count"), &count.saturating_sub(1));
+        Self::bump_instance(&env);
         Ok(())
     }
 
@@ -199,11 +206,13 @@ impl IotRegistrar {
         env.storage()
             .persistent()
             .set(&(symbol_short!("dev"), to_key.clone()), &moved);
+        Self::bump(&env, &(symbol_short!("dev"), to_key.clone()));
 
         let version = Self::bump_version(&env, &to_key);
         env.storage()
             .persistent()
-            .set(&(symbol_short!("ver"), to_key), &version);
+            .set(&(symbol_short!("ver"), to_key.clone()), &version);
+        Self::bump(&env, &(symbol_short!("ver"), to_key));
         Ok(())
     }
 
@@ -220,6 +229,33 @@ impl IotRegistrar {
         env.storage()
             .persistent()
             .has(&(symbol_short!("dev"), public_key.clone()))
+    }
+
+    /// Extends the ledger lifetime of a persistent entry that has just been
+    /// written. Deriving both bounds from the network maximum keeps the
+    /// renewal policy adaptive: an entry is renewed once less than half of its
+    /// life remains and is restored to the full maximum, and nothing has to be
+    /// configured at initialization.
+    fn bump(env: &Env, key: &(Symbol, BytesN<32>)) {
+        let max = env.storage().max_ttl();
+        if max == 0 {
+            return;
+        }
+        env.storage().persistent().extend_ttl(key, max / 2, max);
+    }
+
+    /// Extends the ledger lifetime of the contract instance that has just been
+    /// written. Deriving both bounds from the network maximum keeps the
+    /// renewal policy adaptive: the configuration is renewed once less than half
+    /// of its life remains and is restored to the full maximum, and nothing has
+    /// to be configured at initialization. Instance storage expires as a single
+    /// ledger entry, so one renewal covers every key written by the caller.
+    fn bump_instance(env: &Env) {
+        let max = env.storage().max_ttl();
+        if max == 0 {
+            return;
+        }
+        env.storage().instance().extend_ttl(max / 2, max);
     }
 
     fn bump_version(env: &Env, public_key: &BytesN<32>) -> u32 {

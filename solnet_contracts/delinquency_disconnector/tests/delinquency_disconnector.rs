@@ -1,7 +1,31 @@
 use solnet_delinquency_disconnector::{
     DelinquencyDisconnector, DelinquencyDisconnectorClient, Error, Verdict,
 };
-use soroban_sdk::{testutils::Address as _, testutils::Ledger as _, vec, Address, Env};
+use soroban_sdk::{
+    contract, contractimpl, symbol_short,
+    testutils::{storage::Instance as _, storage::Persistent as _, Address as _, Ledger as _},
+    vec, Address, Env, Symbol,
+};
+
+/// Stand-in for a wired account ledger, so the tests can drive `assess` down
+/// both of its write branches without depending on another contract crate.
+#[contract]
+pub struct StubLedger;
+
+#[contractimpl]
+impl StubLedger {
+    pub fn set_balance(env: Env, account: Address, balance: i128) {
+        env.storage().instance().set(&account, &balance);
+    }
+
+    pub fn rate(_env: Env) -> i128 {
+        1_000_000
+    }
+
+    pub fn watt_balance(env: Env, account: Address) -> i128 {
+        env.storage().instance().get(&account).unwrap_or(0)
+    }
+}
 
 fn setup_with_grace(grace_period: u64) -> (Env, Address, DelinquencyDisconnectorClient<'static>) {
     let e = Env::default();
@@ -15,6 +39,30 @@ fn setup_with_grace(grace_period: u64) -> (Env, Address, DelinquencyDisconnector
 
 fn setup() -> (Env, Address, DelinquencyDisconnectorClient<'static>) {
     setup_with_grace(100)
+}
+
+/// Mirrors `setup` but also hands back the contract address, which the
+/// lifetime assertions below need in order to inspect contract storage.
+fn setup_tracked() -> (Env, Address, Address, DelinquencyDisconnectorClient<'static>) {
+    let e = Env::default();
+    e.mock_all_auths();
+    let admin = Address::generate(&e);
+    let id = e.register(DelinquencyDisconnector, ());
+    let client = DelinquencyDisconnectorClient::new(&e, &id);
+    client.init(&admin, &100);
+    (e, admin, id, client)
+}
+
+fn network_max_ttl(e: &Env, id: &Address) -> u32 {
+    e.as_contract(id, || e.storage().max_ttl())
+}
+
+fn entry_ttl(e: &Env, id: &Address, key: &(Symbol, Address)) -> u32 {
+    e.as_contract(id, || e.storage().persistent().get_ttl(key))
+}
+
+fn instance_ttl(e: &Env, id: &Address) -> u32 {
+    e.as_contract(id, || e.storage().instance().get_ttl())
 }
 
 #[test]
@@ -388,4 +436,139 @@ fn verdict_remains_available_before_wiring() {
     assert_eq!(client.verdict(&account, &-500, &150), Verdict::GracePeriod);
     assert_eq!(client.verdict(&account, &-500, &200), Verdict::Disconnect);
     assert_eq!(client.issue_disconnect(&account).len(), 32);
+}
+
+#[test]
+fn marking_delinquent_renews_the_lifetime_of_both_delinquency_entries() {
+    let (e, admin, id, client) = setup_tracked();
+    let account = Address::generate(&e);
+    let max = network_max_ttl(&e, &id);
+    assert!(max > 0);
+
+    client.mark_delinquent(&admin, &account, &100);
+    assert_eq!(
+        entry_ttl(&e, &id, &(symbol_short!("dln"), account.clone())),
+        max
+    );
+    assert_eq!(
+        entry_ttl(&e, &id, &(symbol_short!("seq"), account.clone())),
+        max
+    );
+}
+
+#[test]
+fn clearing_renews_the_lifetime_of_both_delinquency_entries() {
+    let (e, admin, id, client) = setup_tracked();
+    let account = Address::generate(&e);
+    client.mark_delinquent(&admin, &account, &100);
+    let max = network_max_ttl(&e, &id);
+
+    client.clear(&admin, &account);
+    assert_eq!(
+        entry_ttl(&e, &id, &(symbol_short!("dln"), account.clone())),
+        max
+    );
+    assert_eq!(
+        entry_ttl(&e, &id, &(symbol_short!("seq"), account.clone())),
+        max
+    );
+}
+
+#[test]
+fn assess_renews_the_lifetime_of_the_entries_it_marks() {
+    let (e, admin, id, client) = setup_tracked();
+    let ledger_id = e.register(StubLedger, ());
+    let ledger = StubLedgerClient::new(&e, &ledger_id);
+    let account = Address::generate(&e);
+    client.wire(&admin, &ledger_id);
+    ledger.set_balance(&account, &-500);
+    let max = network_max_ttl(&e, &id);
+
+    assert_eq!(client.assess(&account, &1_000), Verdict::GracePeriod);
+    assert_eq!(
+        entry_ttl(&e, &id, &(symbol_short!("dln"), account.clone())),
+        max
+    );
+    assert_eq!(
+        entry_ttl(&e, &id, &(symbol_short!("seq"), account.clone())),
+        max
+    );
+
+    ledger.set_balance(&account, &500);
+    assert_eq!(client.assess(&account, &1_100), Verdict::NotDelinquent);
+    assert!(!e.as_contract(&id, || {
+        e.storage()
+            .persistent()
+            .has(&(symbol_short!("dln"), account.clone()))
+    }));
+    assert!(!e.as_contract(&id, || {
+        e.storage()
+            .persistent()
+            .has(&(symbol_short!("seq"), account))
+    }));
+}
+
+#[test]
+fn assess_leaves_the_entries_of_an_untouched_account_unrenewed() {
+    let (e, admin, id, client) = setup_tracked();
+    let ledger_id = e.register(StubLedger, ());
+    let ledger = StubLedgerClient::new(&e, &ledger_id);
+    let marked = Address::generate(&e);
+    let other = Address::generate(&e);
+    client.wire(&admin, &ledger_id);
+    ledger.set_balance(&marked, &-500);
+    ledger.set_balance(&other, &-500);
+
+    client.assess(&marked, &1_000);
+    let renewed = entry_ttl(&e, &id, &(symbol_short!("dln"), marked.clone()));
+    assert!(renewed > e.ledger().get().min_persistent_entry_ttl);
+    assert!(!e.as_contract(&id, || {
+        e.storage()
+            .persistent()
+            .has(&(symbol_short!("dln"), other.clone()))
+    }));
+}
+
+#[test]
+fn init_renews_the_lifetime_of_the_contract_instance() {
+    let (e, admin, id, client) = setup_tracked();
+    let max = network_max_ttl(&e, &id);
+    assert!(max > 0);
+
+    let renewed = instance_ttl(&e, &id);
+    assert_eq!(renewed, max);
+    assert!(renewed > e.ledger().get().min_persistent_entry_ttl);
+    assert_eq!(client.admin(), admin);
+    assert_eq!(client.grace_period(), 100);
+}
+
+#[test]
+fn wiring_renews_the_lifetime_of_the_contract_instance() {
+    let (e, admin, id, client) = setup_tracked();
+    let ledger_id = e.register(StubLedger, ());
+    let max = network_max_ttl(&e, &id);
+
+    client.wire(&admin, &ledger_id);
+    let renewed = instance_ttl(&e, &id);
+    assert_eq!(renewed, max);
+    assert!(renewed > e.ledger().get().min_persistent_entry_ttl);
+    assert_eq!(client.ledger(), Some(ledger_id));
+}
+
+#[test]
+fn a_wiring_write_restores_a_decayed_contract_instance() {
+    let (e, admin, id, client) = setup_tracked();
+    let max = network_max_ttl(&e, &id);
+
+    e.ledger().with_mut(|l| l.sequence_number += max / 2 + 1);
+    let decayed = instance_ttl(&e, &id);
+    assert!(decayed < max);
+    assert_eq!(client.grace_period(), 100);
+
+    let ledger_id = e.register(StubLedger, ());
+    client.wire(&admin, &ledger_id);
+    let renewed = instance_ttl(&e, &id);
+    assert_eq!(renewed, max);
+    assert!(renewed > decayed);
+    assert!(renewed > e.ledger().get().min_persistent_entry_ttl);
 }

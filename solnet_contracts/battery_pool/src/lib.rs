@@ -17,7 +17,7 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, symbol_short, Address, BytesN, Env,
+    contract, contracterror, contractimpl, symbol_short, Address, BytesN, Env, IntoVal, Val,
 };
 
 /// Fixed-point denominator: 10000 basis points == 100%.
@@ -60,6 +60,7 @@ impl BatteryPool {
         env.storage().instance().set(&symbol_short!("fee"), &fee_bps);
         env.storage().instance().set(&symbol_short!("tres"), &0i128);
         env.storage().instance().set(&symbol_short!("resvd"), &0i128);
+        Self::bump_instance(&env);
         Ok(())
     }
 
@@ -90,6 +91,7 @@ impl BatteryPool {
             .unwrap_or(0);
         let updated = total.checked_add(amount).ok_or(Error::ArithmeticOverflow)?;
         env.storage().instance().set(&symbol_short!("tres"), &updated);
+        Self::bump_instance(&env);
 
         let prior: i128 = env
             .storage()
@@ -100,6 +102,7 @@ impl BatteryPool {
         env.storage()
             .persistent()
             .set(&(symbol_short!("paid"), &account), &rolled);
+        Self::bump(&env, &(symbol_short!("paid"), &account));
         Ok(())
     }
 
@@ -124,6 +127,7 @@ impl BatteryPool {
             .unwrap_or(0);
         let updated = total.checked_add(collected).ok_or(Error::ArithmeticOverflow)?;
         env.storage().instance().set(&symbol_short!("tres"), &updated);
+        Self::bump_instance(&env);
         Ok(collected)
     }
 
@@ -162,9 +166,11 @@ impl BatteryPool {
         env.storage()
             .instance()
             .set(&symbol_short!("resvd"), &updated);
+        Self::bump_instance(&env);
         env.storage()
             .persistent()
-            .set(&(symbol_short!("rsv"), reason_hash), &amount);
+            .set(&(symbol_short!("rsv"), reason_hash.clone()), &amount);
+        Self::bump(&env, &(symbol_short!("rsv"), reason_hash));
         Ok(())
     }
 
@@ -206,6 +212,7 @@ impl BatteryPool {
         env.storage()
             .instance()
             .set(&symbol_short!("resvd"), &new_reserved);
+        Self::bump_instance(&env);
         let leftover = earmarked.checked_sub(spent).ok_or(Error::ArithmeticOverflow)?;
         if leftover == 0 {
             env.storage()
@@ -215,6 +222,7 @@ impl BatteryPool {
             env.storage()
                 .persistent()
                 .set(&(symbol_short!("rsv"), &reason_hash), &leftover);
+            Self::bump(&env, &(symbol_short!("rsv"), &reason_hash));
         }
         Ok(spent)
     }
@@ -297,5 +305,36 @@ impl BatteryPool {
         }
         admin.require_auth();
         Ok(())
+    }
+
+    /// Extends the ledger lifetime of a persistent entry that has just been
+    /// written, whether it is a contributor record or a work-order earmark.
+    /// Deriving both bounds from the network maximum keeps the renewal policy
+    /// adaptive: an entry is renewed once less than half of its life remains and
+    /// is restored to the full maximum, and nothing has to be configured at
+    /// initialization.
+    fn bump<K>(env: &Env, key: &K)
+    where
+        K: IntoVal<Env, Val>,
+    {
+        let max = env.storage().max_ttl();
+        if max == 0 {
+            return;
+        }
+        env.storage().persistent().extend_ttl(key, max / 2, max);
+    }
+
+    /// Extends the ledger lifetime of the contract instance that has just been
+    /// written. Deriving both bounds from the network maximum keeps the
+    /// renewal policy adaptive: the configuration is renewed once less than half
+    /// of its life remains and is restored to the full maximum, and nothing has
+    /// to be configured at initialization. Instance storage expires as a single
+    /// ledger entry, so one renewal covers every key written by the caller.
+    fn bump_instance(env: &Env) {
+        let max = env.storage().max_ttl();
+        if max == 0 {
+            return;
+        }
+        env.storage().instance().extend_ttl(max / 2, max);
     }
 }

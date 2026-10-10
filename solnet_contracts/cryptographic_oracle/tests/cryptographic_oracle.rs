@@ -1,6 +1,13 @@
-use soroban_sdk::{testutils::Address as _, vec, Address, BytesN, Env, Vec};
 use solnet_cryptographic_oracle::{
     BatchRecord, CryptographicOracle, CryptographicOracleClient, Error, TelemetryEntry,
+};
+use soroban_sdk::{
+    symbol_short,
+    testutils::{
+        storage::{Instance as _, Persistent as _},
+        Address as _, Ledger as _,
+    },
+    vec, Address, BytesN, Env, Symbol, Vec,
 };
 
 fn setup() -> (Env, Address, CryptographicOracleClient<'static>) {
@@ -11,6 +18,37 @@ fn setup() -> (Env, Address, CryptographicOracleClient<'static>) {
     let client = CryptographicOracleClient::new(&e, &id);
     client.init(&admin);
     (e, admin, client)
+}
+
+/// Mirrors `setup` but also hands back the contract address, which the
+/// lifetime assertions below need in order to inspect contract storage.
+fn setup_tracked() -> (Env, Address, Address, CryptographicOracleClient<'static>) {
+    let e = Env::default();
+    e.mock_all_auths();
+    let admin = Address::generate(&e);
+    let id = e.register(CryptographicOracle, ());
+    let client = CryptographicOracleClient::new(&e, &id);
+    client.init(&admin);
+    (e, admin, id, client)
+}
+
+fn network_max_ttl(e: &Env, id: &Address) -> u32 {
+    e.as_contract(id, || e.storage().max_ttl())
+}
+
+fn entry_ttl(e: &Env, id: &Address, key: &(Symbol, BytesN<32>)) -> u32 {
+    e.as_contract(id, || e.storage().persistent().get_ttl(key))
+}
+
+fn instance_ttl(e: &Env, id: &Address) -> u32 {
+    e.as_contract(id, || e.storage().instance().get_ttl())
+}
+
+/// Writes a batch record straight past the contract, with no renewal behind
+/// it, so the assertions below can tell a bumped entry apart from one that
+/// merely happens to exist.
+fn seed_unrenewed(e: &Env, id: &Address, key: &(Symbol, BytesN<32>), value: &BatchRecord) {
+    e.as_contract(id, || e.storage().persistent().set(key, value));
 }
 
 fn key(e: &Env, seed: u32) -> BytesN<32> {
@@ -393,4 +431,68 @@ fn digest_is_order_sensitive_and_domain_separated() {
     assert_ne!(d_ab, d_b);
     assert_eq!(d_ab, client.compute_digest(&ab));
     assert_ne!(d_a, key(&e, 0));
+}
+#[test]
+fn submitting_a_batch_renews_the_lifetime_of_the_batch_record() {
+    let (e, _admin, id, client) = setup_tracked();
+    let batch = key(&e, 11);
+    let untouched = key(&e, 12);
+    let max = network_max_ttl(&e, &id);
+    assert!(max > 0);
+    let floor = e.ledger().get().min_persistent_entry_ttl;
+
+    seed_unrenewed(&e, &id, &(symbol_short!("bat"), untouched.clone()), &record(&_admin, 1, 1, false));
+    assert!(entry_ttl(&e, &id, &(symbol_short!("bat"), untouched.clone())) <= floor);
+
+    client.submit_batch(&_admin, &batch, &entries(&e), &client.compute_digest(&entries(&e)));
+    let renewed = entry_ttl(&e, &id, &(symbol_short!("bat"), batch.clone()));
+    assert_eq!(renewed, max);
+    assert!(renewed > floor);
+    assert!(entry_ttl(&e, &id, &(symbol_short!("bat"), untouched)) <= floor);
+}
+
+#[test]
+fn settling_a_batch_renews_the_lifetime_of_the_batch_record() {
+    let (e, admin, id, client) = setup_tracked();
+    let batch = key(&e, 21);
+    client.submit_batch(&admin, &batch, &entries(&e), &client.compute_digest(&entries(&e)));
+    let max = network_max_ttl(&e, &id);
+
+    client.settle(&admin, &batch);
+    assert!(client.is_settled(&batch));
+    let renewed = entry_ttl(&e, &id, &(symbol_short!("bat"), batch));
+    assert_eq!(renewed, max);
+    assert!(renewed > e.ledger().get().min_persistent_entry_ttl);
+}
+
+#[test]
+fn every_write_path_renews_the_lifetime_of_the_contract_instance() {
+    let (e, admin, id, client) = setup_tracked();
+    let max = network_max_ttl(&e, &id);
+    assert!(max > 0);
+    assert_eq!(instance_ttl(&e, &id), max);
+
+    client.submit_batch(&admin, &key(&e, 31), &entries(&e), &client.compute_digest(&entries(&e)));
+    assert_eq!(client.batch_count(), 1);
+    let renewed = instance_ttl(&e, &id);
+    assert_eq!(renewed, max);
+    assert!(renewed > e.ledger().get().min_persistent_entry_ttl);
+}
+
+#[test]
+fn a_submission_restores_a_decayed_contract_instance() {
+    let (e, admin, id, client) = setup_tracked();
+    let max = network_max_ttl(&e, &id);
+
+    e.ledger().with_mut(|l| l.sequence_number += max / 2 + 1);
+    let decayed = instance_ttl(&e, &id);
+    assert!(decayed < max);
+    assert_eq!(client.batch_count(), 0);
+
+    let batch = key(&e, 41);
+    client.submit_batch(&admin, &batch, &entries(&e), &client.compute_digest(&entries(&e)));
+    assert_eq!(client.batch_count(), 1);
+    let renewed = instance_ttl(&e, &id);
+    assert_eq!(renewed, max);
+    assert!(renewed > decayed);
 }

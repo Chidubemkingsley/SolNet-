@@ -1,4 +1,8 @@
-use soroban_sdk::{testutils::Address as _, Address, BytesN, Env, String};
+use soroban_sdk::{
+    symbol_short,
+    testutils::{storage::Instance as _, storage::Persistent as _, Address as _, Ledger as _},
+    Address, BytesN, Env, String, Symbol,
+};
 use solnet_iot_registrar::{Device, Error, IotRegistrar, IotRegistrarClient};
 
 fn setup() -> (Env, Address, IotRegistrarClient<'static>) {
@@ -9,6 +13,30 @@ fn setup() -> (Env, Address, IotRegistrarClient<'static>) {
     let client = IotRegistrarClient::new(&e, &id);
     client.init(&admin);
     (e, admin, client)
+}
+
+/// Mirrors `setup` but also hands back the contract address, which the
+/// lifetime assertions below need in order to inspect contract storage.
+fn setup_tracked() -> (Env, Address, Address, IotRegistrarClient<'static>) {
+    let e = Env::default();
+    e.mock_all_auths();
+    let admin = Address::generate(&e);
+    let id = e.register(IotRegistrar, ());
+    let client = IotRegistrarClient::new(&e, &id);
+    client.init(&admin);
+    (e, admin, id, client)
+}
+
+fn network_max_ttl(e: &Env, id: &Address) -> u32 {
+    e.as_contract(id, || e.storage().max_ttl())
+}
+
+fn entry_ttl(e: &Env, id: &Address, key: &(Symbol, BytesN<32>)) -> u32 {
+    e.as_contract(id, || e.storage().persistent().get_ttl(key))
+}
+
+fn instance_ttl(e: &Env, id: &Address) -> u32 {
+    e.as_contract(id, || e.storage().instance().get_ttl())
 }
 
 fn key(e: &Env, seed: u32) -> BytesN<32> {
@@ -266,4 +294,109 @@ fn transfer_rejects_invalid_endpoints_and_self_transfer() {
         .try_transfer(&admin, &key(&e, 1), &key(&e, 3))
         .is_err());
     assert!(client.is_registered(&key(&e, 1)));
+}
+#[test]
+fn registration_renews_the_lifetime_of_the_device_and_version_entries() {
+    let (e, _admin, id, client) = setup_tracked();
+    let meter = key(&e, 1);
+    client.register_device(&meter, &model(&e, "SunVault-X1"));
+    let max = network_max_ttl(&e, &id);
+    assert!(max > 0);
+
+    assert_eq!(
+        entry_ttl(&e, &id, &(symbol_short!("dev"), meter.clone())),
+        max
+    );
+    assert_eq!(
+        entry_ttl(&e, &id, &(symbol_short!("ver"), meter.clone())),
+        max
+    );
+}
+
+#[test]
+fn revocation_renews_the_lifetime_of_the_reason_entry() {
+    let (e, admin, id, client) = setup_tracked();
+    let meter = key(&e, 2);
+    client.register_device(&meter, &model(&e, "SunVault-X1"));
+    let max = network_max_ttl(&e, &id);
+
+    client.revoke(&admin, &meter, &model(&e, "seal-broken"));
+    assert_eq!(
+        entry_ttl(&e, &id, &(symbol_short!("rsn"), meter.clone())),
+        max
+    );
+    assert!(!e.as_contract(&id, || {
+        e.storage()
+            .persistent()
+            .has(&(symbol_short!("dev"), meter.clone()))
+    }));
+}
+
+#[test]
+fn transfer_renews_the_lifetime_of_the_destination_entries() {
+    let (e, admin, id, client) = setup_tracked();
+    let source = key(&e, 3);
+    let destination = key(&e, 4);
+    client.register_device(&source, &model(&e, "SunVault-X1"));
+    let max = network_max_ttl(&e, &id);
+
+    client.transfer(&admin, &source, &destination);
+    assert_eq!(
+        entry_ttl(&e, &id, &(symbol_short!("dev"), destination.clone())),
+        max
+    );
+    assert_eq!(
+        entry_ttl(&e, &id, &(symbol_short!("ver"), destination.clone())),
+        max
+    );
+    assert!(!e.as_contract(&id, || {
+        e.storage()
+            .persistent()
+            .has(&(symbol_short!("dev"), source.clone()))
+    }));
+}
+
+#[test]
+fn init_renews_the_lifetime_of_the_contract_instance() {
+    let (e, admin, id, client) = setup_tracked();
+    let max = network_max_ttl(&e, &id);
+    assert!(max > 0);
+
+    let renewed = instance_ttl(&e, &id);
+    assert_eq!(renewed, max);
+    assert!(renewed > e.ledger().get().min_persistent_entry_ttl);
+    assert_eq!(client.admin(), admin);
+    assert_eq!(client.registered_count(), 0);
+}
+
+#[test]
+fn registering_and_revoking_renew_the_lifetime_of_the_contract_instance() {
+    let (e, _admin, id, client) = setup_tracked();
+    let max = network_max_ttl(&e, &id);
+    let device = key(&e, 1);
+
+    client.register_device(&device, &model(&e, "solar"));
+    assert_eq!(instance_ttl(&e, &id), max);
+
+    client.revoke(&_admin, &device, &model(&e, "fault"));
+    assert_eq!(instance_ttl(&e, &id), max);
+}
+
+#[test]
+fn a_registration_write_restores_a_decayed_contract_instance() {
+    let (e, _admin, id, client) = setup_tracked();
+    let max = network_max_ttl(&e, &id);
+
+    e.ledger().with_mut(|l| l.sequence_number += max / 2 + 1);
+    let decayed = instance_ttl(&e, &id);
+    assert!(decayed < max);
+    assert_eq!(client.registered_count(), 0);
+
+    let device = key(&e, 1);
+    client.register_device(&device, &model(&e, "solar"));
+    assert_eq!(client.registered_count(), 1);
+    let renewed = instance_ttl(&e, &id);
+    assert_eq!(renewed, max);
+    assert!(renewed > decayed);
+    assert!(renewed > e.ledger().get().min_persistent_entry_ttl);
 }

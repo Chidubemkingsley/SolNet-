@@ -1,5 +1,12 @@
-use soroban_sdk::{testutils::Address as _, Address, Env};
 use solnet_community_capital::{CommunityCapital, CommunityCapitalClient, Error};
+use soroban_sdk::{
+    symbol_short,
+    testutils::{
+        storage::{Instance as _, Persistent as _},
+        Address as _, Ledger as _,
+    },
+    Address, Env, Symbol,
+};
 
 fn setup() -> (Env, Address, CommunityCapitalClient<'static>) {
     setup_with(500)
@@ -13,6 +20,37 @@ fn setup_with(yield_bps: i128) -> (Env, Address, CommunityCapitalClient<'static>
     let client = CommunityCapitalClient::new(&e, &id);
     client.init(&admin, &yield_bps);
     (e, admin, client)
+}
+
+/// Mirrors `setup_with` but also hands back the contract address, which the
+/// lifetime assertions below need in order to inspect contract storage.
+fn setup_tracked(yield_bps: i128) -> (Env, Address, Address, CommunityCapitalClient<'static>) {
+    let e = Env::default();
+    e.mock_all_auths();
+    let admin = Address::generate(&e);
+    let id = e.register(CommunityCapital, ());
+    let client = CommunityCapitalClient::new(&e, &id);
+    client.init(&admin, &yield_bps);
+    (e, admin, id, client)
+}
+
+fn network_max_ttl(e: &Env, id: &Address) -> u32 {
+    e.as_contract(id, || e.storage().max_ttl())
+}
+
+fn entry_ttl(e: &Env, id: &Address, key: &(Symbol, Address)) -> u32 {
+    e.as_contract(id, || e.storage().persistent().get_ttl(key))
+}
+
+fn instance_ttl(e: &Env, id: &Address) -> u32 {
+    e.as_contract(id, || e.storage().instance().get_ttl())
+}
+
+/// Writes a persistent entry straight past the contract, with no renewal
+/// behind it, so the assertions below can tell a bumped entry apart from one
+/// that merely happens to exist.
+fn seed_unrenewed(e: &Env, id: &Address, key: &(Symbol, Address), value: u64) {
+    e.as_contract(id, || e.storage().persistent().set(key, &value));
 }
 
 #[test]
@@ -285,4 +323,82 @@ fn claim_dividend_rejects_empty_pool_and_non_holders() {
         client.try_claim_dividend(&bystander),
         Err(Ok(Error::NoShares))
     );
+}
+#[test]
+fn investing_renews_the_lifetime_of_every_investor_entry() {
+    let (e, _admin, id, client) = setup_tracked(500);
+    let alice = Address::generate(&e);
+    let bob = Address::generate(&e);
+    let max = network_max_ttl(&e, &id);
+    assert!(max > 0);
+    let floor = e.ledger().get().min_persistent_entry_ttl;
+
+    seed_unrenewed(&e, &id, &(symbol_short!("sh"), bob.clone()), 7u64);
+    assert!(entry_ttl(&e, &id, &(symbol_short!("sh"), bob.clone())) <= floor);
+
+    client.invest(&alice, &1_000);
+    assert_eq!(entry_ttl(&e, &id, &(symbol_short!("sh"), alice.clone())), max);
+    assert_eq!(
+        entry_ttl(&e, &id, &(symbol_short!("clmd"), alice.clone())),
+        max
+    );
+
+    assert!(entry_ttl(&e, &id, &(symbol_short!("sh"), bob)) <= floor);
+
+    client.invest(&alice, &500);
+    assert_eq!(client.total_shares(), 1_500);
+    assert!(entry_ttl(&e, &id, &(symbol_short!("sh"), alice)) == max);
+}
+
+#[test]
+fn claiming_renews_the_lifetime_of_the_claim_tally() {
+    let (e, admin, id, client) = setup_tracked(500);
+    let alice = Address::generate(&e);
+    client.invest(&alice, &1_000);
+    client.accrue_yield(&admin);
+    let max = network_max_ttl(&e, &id);
+
+    client.claim_dividend(&alice);
+    let renewed = entry_ttl(&e, &id, &(symbol_short!("clmd"), alice.clone()));
+    assert_eq!(renewed, max);
+    assert!(renewed > e.ledger().get().min_persistent_entry_ttl);
+}
+
+#[test]
+fn every_write_path_renews_the_lifetime_of_the_contract_instance() {
+    let (e, admin, id, client) = setup_tracked(500);
+    let alice = Address::generate(&e);
+    let max = network_max_ttl(&e, &id);
+    assert!(max > 0);
+    assert_eq!(instance_ttl(&e, &id), max);
+
+    client.invest(&alice, &1_000);
+    assert_eq!(instance_ttl(&e, &id), max);
+
+    client.accrue_yield(&admin);
+    assert_eq!(instance_ttl(&e, &id), max);
+
+    client.claim_dividend(&alice);
+    let renewed = instance_ttl(&e, &id);
+    assert_eq!(renewed, max);
+    assert!(renewed > e.ledger().get().min_persistent_entry_ttl);
+}
+
+#[test]
+fn a_write_restores_a_decayed_contract_instance() {
+    let (e, _admin, id, client) = setup_tracked(500);
+    let alice = Address::generate(&e);
+    let max = network_max_ttl(&e, &id);
+
+    e.ledger().with_mut(|l| l.sequence_number += max / 2 + 1);
+    let decayed = instance_ttl(&e, &id);
+    assert!(decayed < max);
+    assert!(client.total_shares() == 0);
+
+    client.invest(&alice, &1_000);
+    assert_eq!(client.total_shares(), 1_000);
+    let renewed = instance_ttl(&e, &id);
+    assert_eq!(renewed, max);
+    assert!(renewed > decayed);
+    assert!(renewed > e.ledger().get().min_persistent_entry_ttl);
 }

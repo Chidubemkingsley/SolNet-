@@ -13,15 +13,25 @@ echo "========= 🚀 Initializing SolNet Deployment Tool ========="
 # 2. Configure network identifiers
 stellar network add --rpc-url http://localhost:8000/soroban/rpc --network-passphrase "Standalone Network ; February 2017" standalone
 
-# 3. Create cryptographic keys for administrators
-stellar keys generate --network standalone admin_account
+# 3. Create cryptographic keys for administrators. Reuse an existing identity so
+#    the script can be re-run against a long-lived network without aborting on
+#    an alias that is already taken.
+if stellar keys address admin_account >/dev/null 2>&1; then
+    echo "♻️  Reusing existing admin_account identity"
+else
+    stellar keys generate --network standalone admin_account
+fi
 ADMIN_ADDRESS=$(stellar keys address admin_account)
 echo "🎯 Admin Account Initialized: $ADMIN_ADDRESS"
 
-# 4. Compile all workspace contracts down to optimized WebAssembly binaries
-echo "📦 Building workspace contracts via Cargo..."
-cargo build --manifest-path "$CONTRACTS_DIR/Cargo.toml" \
-    --target wasm32-unknown-unknown --release
+# 4. Compile all workspace contracts down to optimized WebAssembly binaries.
+#    `stellar contract build` targets wasm32v1-none, which emits MVP
+#    WebAssembly. A plain `cargo build --target wasm32-unknown-unknown` links
+#    reference-types opcodes that the Soroban VM rejects at upload time with
+#    "reference-types not enabled".
+echo "📦 Building workspace contracts via Stellar CLI..."
+stellar contract build --manifest-path "$CONTRACTS_DIR/Cargo.toml" >/dev/null
+echo "✅ Build complete"
 
 # 5. Per-contract initialization arguments.
 #    Contracts with no extra args initialize with the admin address alone.
@@ -55,7 +65,7 @@ for c in "${CONTRACTS[@]}"; do
     echo "🚀 Installing WASM bytecode for: $c"
 
     # Cargo names the artifact after the package, not the directory.
-    WASM_PATH="$CONTRACTS_DIR/target/wasm32-unknown-unknown/release/solnet_${c}.wasm"
+    WASM_PATH="$CONTRACTS_DIR/target/wasm32v1-none/release/solnet_${c}.wasm"
 
     if [[ ! -f "$WASM_PATH" ]]; then
         echo "❌ Missing WASM artifact: $WASM_PATH"
@@ -93,7 +103,7 @@ stellar contract invoke \
     --source admin_account \
     --network standalone \
     -- \
-    authorize_router --admin "$ADMIN_ADDRESS" "${DEPLOYED[micro_billing]}"
+    authorize_router --admin "$ADMIN_ADDRESS" --router "${DEPLOYED[micro_billing]}"
 
 # Billing router -> account ledger
 stellar contract invoke \
@@ -101,7 +111,7 @@ stellar contract invoke \
     --source admin_account \
     --network standalone \
     -- \
-    wire --admin "$ADMIN_ADDRESS" "${DEPLOYED[account_ledger]}"
+    wire --admin "$ADMIN_ADDRESS" --ledger "${DEPLOYED[account_ledger]}"
 
 # Disconnector -> account ledger
 stellar contract invoke \
@@ -109,7 +119,7 @@ stellar contract invoke \
     --source admin_account \
     --network standalone \
     -- \
-    wire --admin "$ADMIN_ADDRESS" "${DEPLOYED[account_ledger]}"
+    wire --admin "$ADMIN_ADDRESS" --ledger "${DEPLOYED[account_ledger]}"
 
 echo "=================================================="
 echo "🎉 Deployment Successful! All 12 contracts live."

@@ -1,5 +1,9 @@
 use solnet_account_ledger::{AccountLedger, AccountLedgerClient, Error};
-use soroban_sdk::{testutils::Address as _, vec, Address, Env};
+use soroban_sdk::{
+    symbol_short,
+    testutils::{storage::Instance as _, storage::Persistent as _, Address as _, Ledger as _},
+    vec, Address, Env, Symbol,
+};
 
 const SCALE: i128 = 1_000_000;
 
@@ -15,6 +19,30 @@ fn setup_with_rate(rate: i128) -> (Env, Address, AccountLedgerClient<'static>) {
 
 fn setup() -> (Env, Address, AccountLedgerClient<'static>) {
     setup_with_rate(SCALE)
+}
+
+/// Mirrors `setup` but also hands back the contract address, which the
+/// lifetime assertions below need in order to inspect contract storage.
+fn setup_tracked() -> (Env, Address, Address, AccountLedgerClient<'static>) {
+    let e = Env::default();
+    e.mock_all_auths();
+    let admin = Address::generate(&e);
+    let id = e.register(AccountLedger, ());
+    let client = AccountLedgerClient::new(&e, &id);
+    client.init(&admin, &SCALE);
+    (e, admin, id, client)
+}
+
+fn network_max_ttl(e: &Env, id: &Address) -> u32 {
+    e.as_contract(id, || e.storage().max_ttl())
+}
+
+fn entry_ttl(e: &Env, id: &Address, key: &(Symbol, Address)) -> u32 {
+    e.as_contract(id, || e.storage().persistent().get_ttl(key))
+}
+
+fn instance_ttl(e: &Env, id: &Address) -> u32 {
+    e.as_contract(id, || e.storage().instance().get_ttl())
 }
 
 #[test]
@@ -538,4 +566,92 @@ fn revoked_router_can_no_longer_charge() {
 
     client.authorize_router(&admin, &router);
     assert_eq!(client.apply_consumption(&router, &account, &10), 80);
+}
+
+#[test]
+fn balance_write_paths_renew_the_lifetime_of_both_balance_entries() {
+    let (e, admin, id, client) = setup_tracked();
+    let account = Address::generate(&e);
+    let router = Address::generate(&e);
+    client.authorize_router(&admin, &router);
+    let max = network_max_ttl(&e, &id);
+    assert!(max > 0);
+
+    client.deposit(&account, &100);
+    assert_eq!(entry_ttl(&e, &id, &(symbol_short!("bal"), account.clone())), max);
+    assert_eq!(entry_ttl(&e, &id, &(symbol_short!("wat"), account.clone())), max);
+
+    client.withdraw(&account, &20);
+    assert_eq!(entry_ttl(&e, &id, &(symbol_short!("bal"), account.clone())), max);
+    assert_eq!(entry_ttl(&e, &id, &(symbol_short!("wat"), account.clone())), max);
+
+    client.credit_watts(&admin, &account, &40);
+    assert_eq!(entry_ttl(&e, &id, &(symbol_short!("wat"), account.clone())), max);
+
+    client.apply_consumption(&router, &account, &10);
+    assert_eq!(entry_ttl(&e, &id, &(symbol_short!("wat"), account.clone())), max);
+}
+
+#[test]
+fn router_grant_renews_the_lifetime_of_the_capability_entry() {
+    let (e, admin, id, client) = setup_tracked();
+    let router = Address::generate(&e);
+    let max = network_max_ttl(&e, &id);
+
+    client.authorize_router(&admin, &router);
+    assert_eq!(entry_ttl(&e, &id, &(symbol_short!("rtr"), router.clone())), max);
+
+    client.revoke_router(&admin, &router);
+    client.authorize_router(&admin, &router);
+    assert_eq!(entry_ttl(&e, &id, &(symbol_short!("rtr"), router)), max);
+}
+
+#[test]
+fn renewal_outlives_the_minimum_entry_ttl_and_leaves_other_accounts_alone() {
+    let (e, admin, id, client) = setup_tracked();
+    let touched = Address::generate(&e);
+    let untouched = Address::generate(&e);
+    client.deposit(&touched, &100);
+    client.credit_watts(&admin, &touched, &5);
+    let max = network_max_ttl(&e, &id);
+
+    let renewed = entry_ttl(&e, &id, &(symbol_short!("wat"), touched));
+    assert_eq!(renewed, max);
+
+    assert!(renewed > e.ledger().get().min_persistent_entry_ttl);
+    assert!(!e.as_contract(&id, || {
+        e.storage()
+            .persistent()
+            .has(&(symbol_short!("bal"), untouched.clone()))
+    }));
+}
+
+#[test]
+fn init_renews_the_lifetime_of_the_contract_instance() {
+    let (e, admin, id, client) = setup_tracked();
+    let max = network_max_ttl(&e, &id);
+    assert!(max > 0);
+
+    let renewed = instance_ttl(&e, &id);
+    assert_eq!(renewed, max);
+    assert!(renewed > e.ledger().get().min_persistent_entry_ttl);
+    assert_eq!(client.admin(), admin);
+    assert_eq!(client.rate(), SCALE);
+}
+
+#[test]
+fn an_idle_ledger_no_longer_bricks_the_contract_instance() {
+    let (e, admin, id, client) = setup_tracked();
+    let max = network_max_ttl(&e, &id);
+    let account = Address::generate(&e);
+    client.deposit(&account, &100);
+
+    let idle = e.ledger().get().min_persistent_entry_ttl + 1;
+    e.ledger().with_mut(|l| l.sequence_number += idle);
+    let decayed = instance_ttl(&e, &id);
+    assert!(decayed < max);
+
+    assert_eq!(client.admin(), admin);
+    assert_eq!(client.rate(), SCALE);
+    assert_eq!(client.deposit(&account, &50), 50);
 }

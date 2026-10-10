@@ -7,7 +7,8 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, Vec,
+    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, IntoVal, Val,
+    Vec,
 };
 
 #[contracterror]
@@ -22,7 +23,24 @@ pub enum Error {
     SelfLink = 6,
     DuplicateEdge = 7,
     InvalidCapacity = 8,
+    TraversalTooLarge = 9,
+    InvalidTraversalLimit = 10,
 }
+
+/// Default ceiling on how many nodes one connectivity query may visit.
+///
+/// Reachability is a breadth-first walk over storage whose visited-set
+/// membership test is linear, so cost grows quadratically with the number of
+/// nodes reached. Measured against the Soroban test harness budget, a walk of
+/// roughly a hundred nodes is already enough to exhaust the instruction
+/// budget, so the default is set well below that. Real ledgers generally allow
+/// more, and an operator who has measured their own limit can raise it through
+/// `set_traversal_limit`.
+const DEFAULT_TRAVERSAL: u32 = 64;
+
+/// Absolute ceiling the administrator cannot exceed, so that a mistaken call
+/// cannot configure the contract into guaranteed budget exhaustion.
+const TRAVERSAL_CEILING: u32 = 4096;
 
 /// Physical role a topology node plays in the microgrid.
 #[contracttype]
@@ -63,6 +81,10 @@ impl GridTopology {
         env.storage().instance().set(&symbol_short!("admin"), &admin);
         env.storage().instance().set(&symbol_short!("count"), &0u32);
         env.storage().instance().set(&symbol_short!("capsum"), &0i128);
+        env.storage()
+            .instance()
+            .set(&symbol_short!("tlim"), &DEFAULT_TRAVERSAL);
+        Self::bump_instance(&env);
         Ok(())
     }
 
@@ -113,10 +135,15 @@ impl GridTopology {
         env.storage()
             .instance()
             .set(&symbol_short!("capsum"), &(capsum + capacity_mwh));
+        Self::bump_instance(&env);
 
         env.storage()
             .persistent()
             .set(&(symbol_short!("nb"), id), &Vec::<u32>::new(&env));
+        Self::bump(&env, &(symbol_short!("nb"), id));
+        Self::bump(&env, &(symbol_short!("kind"), id));
+        Self::bump(&env, &(symbol_short!("cap"), id));
+        Self::bump(&env, &(symbol_short!("live"), id));
         Ok(())
     }
 
@@ -193,6 +220,8 @@ impl GridTopology {
         env.storage()
             .persistent()
             .set(&(symbol_short!("nb"), b), &nb_b);
+        Self::bump(&env, &(symbol_short!("nb"), a));
+        Self::bump(&env, &(symbol_short!("nb"), b));
         Ok(())
     }
 
@@ -208,6 +237,30 @@ impl GridTopology {
             .unwrap_or(Vec::new(&env)))
     }
 
+    /// Raises or lowers how many nodes a single connectivity query may visit.
+    /// The value is clamped to `1..=TRAVERSAL_CEILING`; a larger request is
+    /// rejected outright rather than silently clamped, so an operator never
+    /// believes a limit is in force when it is not.
+    pub fn set_traversal_limit(env: Env, admin: Address, limit: u32) -> Result<(), Error> {
+        Self::require_admin_auth(&env, &admin)?;
+        if limit == 0 || limit > TRAVERSAL_CEILING {
+            return Err(Error::InvalidTraversalLimit);
+        }
+        env.storage()
+            .instance()
+            .set(&symbol_short!("tlim"), &limit);
+        Self::bump_instance(&env);
+        Ok(())
+    }
+
+    /// The current node-visit ceiling for connectivity queries.
+    pub fn traversal_limit(env: Env) -> u32 {
+        env.storage()
+            .instance()
+            .get(&symbol_short!("tlim"))
+            .unwrap_or(DEFAULT_TRAVERSAL)
+    }
+
     /// Breadth-first reachability check across the topology graph.
     pub fn are_connected(env: Env, a: u32, b: u32) -> Result<bool, Error> {
         if !Self::node_key_exists(&env, a) {
@@ -220,6 +273,7 @@ impl GridTopology {
             return Ok(true);
         }
 
+        let limit = Self::traversal_limit(env.clone());
         let mut seen: Vec<u32> = Vec::new(&env);
         let mut frontier: Vec<u32> = Vec::new(&env);
         seen.push_back(a);
@@ -238,6 +292,9 @@ impl GridTopology {
                     return Ok(true);
                 }
                 if !seen.contains(neighbor) {
+                    if seen.len() >= limit {
+                        return Err(Error::TraversalTooLarge);
+                    }
                     seen.push_back(neighbor);
                     frontier.push_back(neighbor);
                 }
@@ -267,6 +324,8 @@ impl GridTopology {
         env.storage()
             .persistent()
             .set(&(symbol_short!("live"), id), &false);
+        Self::bump(&env, &(symbol_short!("live"), id));
+        Self::bump_instance(&env);
         Ok(())
     }
 
@@ -307,6 +366,27 @@ impl GridTopology {
         env.storage()
             .persistent()
             .has(&(symbol_short!("kind"), id))
+    }
+
+    /// Renews the lifetime of a persistent entry to the network maximum.
+    fn bump<K: IntoVal<Env, Val>>(env: &Env, key: &K) {
+        let max = env.storage().max_ttl();
+        if max == 0 {
+            return;
+        }
+        env.storage()
+            .persistent()
+            .extend_ttl(key, max / 2, max);
+    }
+
+    /// Renews the lifetime of the contract instance. Instance storage is a
+    /// single ledger entry, so one call covers every config key it holds.
+    fn bump_instance(env: &Env) {
+        let max = env.storage().max_ttl();
+        if max == 0 {
+            return;
+        }
+        env.storage().instance().extend_ttl(max / 2, max);
     }
 
     fn require_live(env: &Env, id: u32) -> Result<(), Error> {

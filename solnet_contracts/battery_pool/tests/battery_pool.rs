@@ -1,4 +1,8 @@
-use soroban_sdk::{testutils::Address as _, Address, BytesN, Env};
+use soroban_sdk::{
+    symbol_short,
+    testutils::{storage::Instance as _, storage::Persistent as _, Address as _, Ledger as _},
+    Address, BytesN, Env, Symbol,
+};
 use solnet_battery_pool::{BatteryPool, BatteryPoolClient, Error};
 
 fn setup_with(fee_bps: i128) -> (Env, Address, BatteryPoolClient<'static>) {
@@ -13,6 +17,34 @@ fn setup_with(fee_bps: i128) -> (Env, Address, BatteryPoolClient<'static>) {
 
 fn setup() -> (Env, Address, BatteryPoolClient<'static>) {
     setup_with(250)
+}
+
+/// Mirrors `setup` but also hands back the contract address, which the
+/// lifetime assertions below need in order to inspect contract storage.
+fn setup_tracked() -> (Env, Address, Address, BatteryPoolClient<'static>) {
+    let e = Env::default();
+    e.mock_all_auths();
+    let admin = Address::generate(&e);
+    let id = e.register(BatteryPool, ());
+    let client = BatteryPoolClient::new(&e, &id);
+    client.init(&admin, &250);
+    (e, admin, id, client)
+}
+
+fn network_max_ttl(e: &Env, id: &Address) -> u32 {
+    e.as_contract(id, || e.storage().max_ttl())
+}
+
+fn contribution_ttl(e: &Env, id: &Address, key: &(Symbol, Address)) -> u32 {
+    e.as_contract(id, || e.storage().persistent().get_ttl(key))
+}
+
+fn reservation_ttl(e: &Env, id: &Address, key: &(Symbol, BytesN<32>)) -> u32 {
+    e.as_contract(id, || e.storage().persistent().get_ttl(key))
+}
+
+fn instance_ttl(e: &Env, id: &Address) -> u32 {
+    e.as_contract(id, || e.storage().instance().get_ttl())
 }
 
 fn hash(env: &Env, byte: u8) -> BytesN<32> {
@@ -393,4 +425,162 @@ fn reserve_totals_guard_against_i128_overflow() {
         big_fee.try_collect_fee(&i128::MAX),
         Err(Ok(Error::ArithmeticOverflow))
     );
+}
+
+#[test]
+fn contribution_and_earmark_writes_renew_the_lifetime_of_their_entries() {
+    let (e, admin, id, client) = setup_tracked();
+    let max = network_max_ttl(&e, &id);
+    assert!(max > 0);
+    let payer = Address::generate(&e);
+
+    client.contribute(&payer, &1_000);
+    let renewed = contribution_ttl(&e, &id, &(symbol_short!("paid"), payer));
+    assert_eq!(renewed, max);
+    assert!(renewed > e.ledger().get().min_persistent_entry_ttl);
+
+    client.reserve_for_maintenance(&admin, &400, &hash(&e, 5));
+    let earmarked = reservation_ttl(&e, &id, &(symbol_short!("rsv"), hash(&e, 5)));
+    assert_eq!(earmarked, max);
+    assert!(earmarked > e.ledger().get().min_persistent_entry_ttl);
+    assert_invariant(&client);
+}
+
+#[test]
+fn settling_an_earmark_renews_a_rewritten_entry_and_leaves_the_closed_one_removed() {
+    let (e, admin, id, client) = setup_tracked();
+    let max = network_max_ttl(&e, &id);
+    let payer = Address::generate(&e);
+    let partial = hash(&e, 6);
+    let closed = hash(&e, 7);
+    client.contribute(&payer, &1_000);
+    client.reserve_for_maintenance(&admin, &600, &partial);
+    client.reserve_for_maintenance(&admin, &200, &closed);
+
+    client.settle_maintenance(&admin, &partial, &250);
+    assert_eq!(
+        client.reserved_amount(&partial),
+        350,
+    );
+    assert_eq!(
+        reservation_ttl(&e, &id, &(symbol_short!("rsv"), partial)),
+        max
+    );
+
+    client.settle_maintenance(&admin, &closed, &200);
+    assert!(!client.is_reserved(&closed));
+    assert!(!e.as_contract(&id, || {
+        e.storage()
+            .persistent()
+            .has(&(symbol_short!("rsv"), closed))
+    }));
+    assert_invariant(&client);
+}
+
+#[test]
+fn a_renewed_entry_outlives_one_the_pool_never_touched() {
+    let (e, _admin, id, client) = setup_tracked();
+    let payer = Address::generate(&e);
+    client.contribute(&payer, &1_000);
+
+    let control = (symbol_short!("ctl"), payer.clone());
+    e.as_contract(&id, || e.storage().persistent().set(&control, &0i128));
+
+    let renewed = contribution_ttl(&e, &id, &(symbol_short!("paid"), payer));
+    let untouched = contribution_ttl(&e, &id, &control);
+    assert_eq!(renewed, network_max_ttl(&e, &id));
+    assert!(renewed > e.ledger().get().min_persistent_entry_ttl);
+    assert!(untouched <= e.ledger().get().min_persistent_entry_ttl);
+    assert!(untouched < renewed);
+}
+#[test]
+fn init_renews_the_lifetime_of_the_contract_instance() {
+    let (e, admin, id, client) = setup_tracked();
+    let max = network_max_ttl(&e, &id);
+    assert!(max > 0);
+
+    let renewed = instance_ttl(&e, &id);
+    assert_eq!(renewed, max);
+    assert!(renewed > e.ledger().get().min_persistent_entry_ttl);
+    assert_eq!(client.admin(), admin);
+    assert_eq!(client.fee_bps(), 250);
+}
+
+#[test]
+fn every_instance_writing_path_renews_the_lifetime_of_the_contract_instance() {
+    let (e, admin, id, client) = setup_tracked();
+    let account = Address::generate(&e);
+    let job = BytesN::from_array(&e, &[9u8; 32]);
+    let max = network_max_ttl(&e, &id);
+
+    client.contribute(&account, &1_000);
+    assert_eq!(instance_ttl(&e, &id), max);
+
+    client.collect_fee(&1_000);
+    assert_eq!(instance_ttl(&e, &id), max);
+
+    client.reserve_for_maintenance(&admin, &400, &job);
+    assert_eq!(instance_ttl(&e, &id), max);
+
+    client.settle_maintenance(&admin, &job, &100);
+    assert_eq!(instance_ttl(&e, &id), max);
+    assert_eq!(client.total_reserve(), 925);
+    assert_eq!(client.reserved_for_maintenance(), 300);
+}
+
+#[test]
+fn a_reserve_write_restores_a_decayed_contract_instance() {
+    let (e, admin, id, client) = setup_tracked();
+    let account = Address::generate(&e);
+    let job = BytesN::from_array(&e, &[9u8; 32]);
+    let max = network_max_ttl(&e, &id);
+    client.contribute(&account, &1_000);
+
+    e.ledger().with_mut(|l| l.sequence_number += max / 2 + 1);
+    let decayed = instance_ttl(&e, &id);
+    assert!(decayed < max);
+    assert_eq!(client.total_reserve(), 1_000);
+
+    client.reserve_for_maintenance(&admin, &400, &job);
+    assert_eq!(client.reserved_for_maintenance(), 400);
+    let renewed = instance_ttl(&e, &id);
+    assert_eq!(renewed, max);
+    assert!(renewed > decayed);
+    assert!(renewed > e.ledger().get().min_persistent_entry_ttl);
+}
+
+#[test]
+fn a_settlement_write_restores_a_decayed_contract_instance() {
+    let (e, admin, id, client) = setup_tracked();
+    let account = Address::generate(&e);
+    let job = BytesN::from_array(&e, &[9u8; 32]);
+    let max = network_max_ttl(&e, &id);
+    client.contribute(&account, &1_000);
+    client.reserve_for_maintenance(&admin, &400, &job);
+
+    e.ledger().with_mut(|l| l.sequence_number += max / 2 + 1);
+    let decayed = instance_ttl(&e, &id);
+    assert!(decayed < max);
+
+    client.settle_maintenance(&admin, &job, &100);
+    assert_eq!(client.total_reserve(), 900);
+    let renewed = instance_ttl(&e, &id);
+    assert_eq!(renewed, max);
+    assert!(renewed > decayed);
+}
+
+#[test]
+fn a_fee_levy_restores_a_decayed_contract_instance() {
+    let (e, _admin, id, client) = setup_tracked();
+    let max = network_max_ttl(&e, &id);
+
+    e.ledger().with_mut(|l| l.sequence_number += max / 2 + 1);
+    let decayed = instance_ttl(&e, &id);
+    assert!(decayed < max);
+
+    assert_eq!(client.collect_fee(&1_000), 25);
+    assert_eq!(client.total_reserve(), 25);
+    let renewed = instance_ttl(&e, &id);
+    assert_eq!(renewed, max);
+    assert!(renewed > decayed);
 }

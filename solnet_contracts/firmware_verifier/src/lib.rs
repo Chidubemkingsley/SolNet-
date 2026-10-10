@@ -12,6 +12,7 @@
 
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, Address, Bytes, BytesN, Env,
+    IntoVal, Val,
 };
 
 #[contracterror]
@@ -71,6 +72,7 @@ impl FirmwareVerifier {
         env.storage().instance().set(&symbol_short!("admin"), &admin);
         env.storage().instance().set(&symbol_short!("lv"), &0u32);
         env.storage().instance().set(&symbol_short!("flr"), &0u32);
+        Self::bump_instance(&env);
         Ok(())
     }
 
@@ -120,6 +122,11 @@ impl FirmwareVerifier {
         env.storage()
             .persistent()
             .set(&(symbol_short!("sc"), firmware_hash.clone()), &0u32);
+        Self::bump(&env, &(symbol_short!("apr"), firmware_hash.clone()));
+        Self::bump(&env, &(symbol_short!("rvk"), firmware_hash.clone()));
+        Self::bump(&env, &(symbol_short!("ver"), firmware_hash.clone()));
+        Self::bump(&env, &(symbol_short!("mnv"), firmware_hash.clone()));
+        Self::bump(&env, &(symbol_short!("sc"), firmware_hash.clone()));
 
         let latest: u32 = env
             .storage()
@@ -140,6 +147,7 @@ impl FirmwareVerifier {
                 .instance()
                 .set(&symbol_short!("flr"), &min_version);
         }
+        Self::bump_instance(&env);
         Ok(())
     }
 
@@ -161,6 +169,8 @@ impl FirmwareVerifier {
         env.storage()
             .persistent()
             .set(&(symbol_short!("rvk"), firmware_hash.clone()), &true);
+        Self::bump(&env, &(symbol_short!("apr"), firmware_hash.clone()));
+        Self::bump(&env, &(symbol_short!("rvk"), firmware_hash.clone()));
         Ok(())
     }
 
@@ -232,6 +242,7 @@ impl FirmwareVerifier {
         env.storage()
             .persistent()
             .set(&(symbol_short!("dv"), device_key.clone()), &current_version);
+        Self::bump(&env, &(symbol_short!("dv"), device_key.clone()));
 
         let mut payload = Bytes::new(&env);
         payload.append(&Bytes::from(device_key.clone()));
@@ -241,6 +252,7 @@ impl FirmwareVerifier {
         env.storage()
             .persistent()
             .set(&(symbol_short!("dig"), device_key.clone()), &attestation);
+        Self::bump(&env, &(symbol_short!("dig"), device_key));
 
         if Self::approved_flag(&env, &firmware_hash) {
             let version: u32 = env
@@ -258,7 +270,8 @@ impl FirmwareVerifier {
                     .unwrap_or(0);
                 env.storage()
                     .persistent()
-                    .set(&(symbol_short!("sc"), firmware_hash), &(stale + 1));
+                    .set(&(symbol_short!("sc"), firmware_hash.clone()), &(stale + 1));
+                Self::bump(&env, &(symbol_short!("sc"), firmware_hash));
             }
         }
         Ok(())
@@ -365,6 +378,31 @@ impl FirmwareVerifier {
             local
         } else {
             global
+        }
+    }
+
+    /// Extends the ledger lifetime of a persistent entry that has just been
+    /// written. Deriving both bounds from the network maximum keeps the
+    /// renewal policy adaptive: an entry is renewed once less than half of its
+    /// life remains and is restored to the full maximum, and nothing has to be
+    /// configured at initialization.
+    fn bump<K: IntoVal<Env, Val>>(env: &Env, key: &K) {
+        let max = env.storage().max_ttl();
+        if max > 0 {
+            env.storage().persistent().extend_ttl(key, max / 2, max);
+        }
+    }
+
+    /// Extends the ledger lifetime of the contract instance that has just been
+    /// written. Deriving both bounds from the network maximum keeps the
+    /// renewal policy adaptive: the configuration is renewed once less than half
+    /// of its life remains and is restored to the full maximum, and nothing has
+    /// to be configured at initialization. Instance storage expires as a single
+    /// ledger entry, so one renewal covers every key written by the caller.
+    fn bump_instance(env: &Env) {
+        let max = env.storage().max_ttl();
+        if max > 0 {
+            env.storage().instance().extend_ttl(max / 2, max);
         }
     }
 }

@@ -112,20 +112,31 @@ Clone the repository and compile the 12-contract Rust workspace:
 git clone https://github.com/Chidubemkingsley/SolNet-.git
 cd SolNet-
 
-# Compile all modules down to optimized WASM bytecode
-cargo build --manifest-path solnet_contracts/Cargo.toml \
-    --target wasm32-unknown-unknown --release
+# Build all contracts to deployable WASM
+stellar contract build --manifest-path solnet_contracts/Cargo.toml
 ```
 
-Artifacts land in `solnet_contracts/target/wasm32-unknown-unknown/release/solnet_<module>.wasm`.
+Artifacts land in `solnet_contracts/target/wasm32v1-none/release/solnet_<module>.wasm`.
+
+Use `stellar contract build`, **not** `cargo build --target wasm32-unknown-unknown`. The Soroban VM validates contract modules against MVP WebAssembly; the `wasm32-unknown-unknown` target links `reference-types` opcodes and the upload is rejected with `reference-types not enabled`.
 
 ### 2. Run the Test Suite
 
-Every contract ships with an integration suite of **15 tests**, covering happy paths, every error branch, authorization failures, replay protection, and accounting invariants — 180 tests in total.
+Every contract ships with an integration suite covering happy paths, every error branch, authorization failures, replay protection, TTL renewal, and accounting invariants.
 
 ```bash
 cargo test --manifest-path solnet_contracts/Cargo.toml --workspace
 ```
+
+| Package | Tests |
+|---|---|
+| `grid_topology` | 21 |
+| `account_ledger` | 33 |
+| `micro_billing` | 24 |
+| `delinquency_disconnector` | 28 |
+| `integration_tests` | 16 |
+| 8 remaining contracts | 15 each |
+| **Total** | **291** |
 
 ### 3. Deploy to Standalone Network
 
@@ -142,14 +153,35 @@ Configuration values are overridable via environment variables (for example `BAS
 
 ## ⚠️ Build Notes
 
-Two version constraints are load-bearing. Breaking either one stops the workspace from compiling.
+Three version constraints are load-bearing. Breaking any one of them stops the workspace from compiling or deploying.
 
+- **Build with `stellar contract build`.** It targets `wasm32v1-none` and emits MVP WebAssembly. A plain `cargo build --target wasm32-unknown-unknown` produces `reference-types` opcodes that the Soroban VM rejects at upload time. This was found only by deploying to a real node — no amount of local testing surfaces it.
 - **Soroban SDK v22, not v20.** The v20 line's `testutils` feature does not compile — an `arbitrary` / `stellar-xdr` derive incompatibility producing ~1800 errors — so no unit or integration tests can be written against it. The workspace pins `soroban-sdk = "22.0.0"`.
 - **Keep `Cargo.lock` committed.** `soroban-env-host` declares `ed25519-dalek = ">=2.0.0"`, an unbounded range that resolves to v3 and breaks the build with a `CryptoRng` trait error. The lockfile pins `ed25519-dalek` to `2.2.0`. If it is ever regenerated, re-apply with:
 
   ```bash
   cargo update -p ed25519-dalek@3.0.0 --precise 2.2.0
   ```
+
+The release profile keeps `overflow-checks = true` on purpose. Every contract performs signed 128-bit arithmetic over balances and prices, and a silently wrapped multiplication is a fund-loss bug rather than a panic.
+
+---
+
+## 🧪 Verified On-Chain
+
+The consumption loop was exercised end to end against a local standalone node (`stellar/quickstart`), not just the mock ledger:
+
+| Step | Result |
+|---|---|
+| Deposit 100 stablecoin | 100 Watt-credits minted |
+| Reading 10 mWh @ 250/mWh | charge 2, ledger 100 → 98 (cross-contract debit) |
+| Replayed nonce | rejected, balance unchanged at 98 |
+| Reading 1000 mWh | charge 250, ledger → **-152** |
+| `assess` at seq 0 / 86399 | `GracePeriod` |
+| `assess` at seq 86400 | `Disconnect` |
+| `issue_disconnect` | 32-byte relay instruction emitted |
+
+Storage TTL renewal and the traversal ceiling are likewise covered by tests, including ledger-advance decay tests that confirm state survives past the minimum entry lifetime.
 
 ---
 

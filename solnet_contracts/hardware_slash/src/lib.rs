@@ -12,7 +12,7 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env,
+    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, IntoVal, Val,
 };
 
 #[contracterror]
@@ -75,6 +75,7 @@ impl HardwareSlash {
         env.storage().instance().set(&symbol_short!("burn"), &0i128);
         env.storage().instance().set(&symbol_short!("slz"), &0i128);
         env.storage().instance().set(&symbol_short!("dep"), &0i128);
+        Self::bump_instance(&env);
         Ok(())
     }
 
@@ -88,6 +89,7 @@ impl HardwareSlash {
         env.storage()
             .persistent()
             .set(&(symbol_short!("col"), owner.clone()), &(existing + amount));
+        Self::bump(&env, &(symbol_short!("col"), owner.clone()));
         let deposited: i128 = env
             .storage()
             .instance()
@@ -96,6 +98,7 @@ impl HardwareSlash {
         env.storage()
             .instance()
             .set(&symbol_short!("dep"), &(deposited + amount));
+        Self::bump_instance(&env);
         Ok(())
     }
 
@@ -133,7 +136,15 @@ impl HardwareSlash {
             .set(&(symbol_short!("col"), owner.clone()), &0i128);
         env.storage()
             .persistent()
-            .set(&(symbol_short!("sl"), owner.clone(), Self::code(offence)), &true);
+            .set(
+                &(symbol_short!("sl"), owner.clone(), Self::code(offence)),
+                &true,
+            );
+        Self::bump(&env, &(symbol_short!("col"), owner.clone()));
+        Self::bump(
+            &env,
+            &(symbol_short!("sl"), owner.clone(), Self::code(offence)),
+        );
 
         let pool: i128 = env
             .storage()
@@ -159,6 +170,7 @@ impl HardwareSlash {
         env.storage()
             .instance()
             .set(&symbol_short!("slz"), &(slashed_total + seized));
+        Self::bump_instance(&env);
 
         Ok(SlashResult {
             seized,
@@ -178,7 +190,11 @@ impl HardwareSlash {
         Self::require_admin_auth(&env, &admin)?;
         env.storage()
             .persistent()
-            .set(&(symbol_short!("ap"), owner, Self::code(offence)), &true);
+            .set(&(symbol_short!("ap"), owner.clone(), Self::code(offence)), &true);
+        Self::bump(
+            &env,
+            &(symbol_short!("ap"), owner, Self::code(offence)),
+        );
         Ok(())
     }
 
@@ -195,6 +211,7 @@ impl HardwareSlash {
             return Err(Error::NoAppeal);
         }
         env.storage().persistent().set(&key, &false);
+        Self::bump(&env, &key);
         Ok(())
     }
 
@@ -291,6 +308,32 @@ impl HardwareSlash {
         match offence {
             Offence::SpoofedGeneration => 1,
             Offence::RouterBypass => 2,
+        }
+    }
+
+    /// Extends the ledger lifetime of a persistent entry that has just been
+    /// written, whether it is a collateral balance, a slash marker, or an
+    /// appeal freeze. Deriving both bounds from the network maximum keeps the
+    /// renewal policy adaptive: an entry is renewed once less than half of its
+    /// life remains and is restored to the full maximum, and nothing has to be
+    /// configured at initialization.
+    fn bump<K: IntoVal<Env, Val>>(env: &Env, key: &K) {
+        let max = env.storage().max_ttl();
+        if max > 0 {
+            env.storage().persistent().extend_ttl(key, max / 2, max);
+        }
+    }
+
+    /// Extends the ledger lifetime of the contract instance that has just been
+    /// written. Deriving both bounds from the network maximum keeps the
+    /// renewal policy adaptive: the configuration is renewed once less than half
+    /// of its life remains and is restored to the full maximum, and nothing has
+    /// to be configured at initialization. Instance storage expires as a single
+    /// ledger entry, so one renewal covers every key written by the caller.
+    fn bump_instance(env: &Env) {
+        let max = env.storage().max_ttl();
+        if max > 0 {
+            env.storage().instance().extend_ttl(max / 2, max);
         }
     }
 }

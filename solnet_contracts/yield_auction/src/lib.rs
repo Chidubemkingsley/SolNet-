@@ -15,7 +15,7 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, Vec,
+    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, Symbol, Vec,
 };
 
 #[contracterror]
@@ -96,6 +96,7 @@ impl YieldAuction {
         env.storage().instance().set(&symbol_short!("admin"), &admin);
         env.storage().instance().set(&symbol_short!("nAuction"), &0u64);
         env.storage().instance().set(&symbol_short!("nBidSeq"), &0u64);
+        Self::bump_instance(&env);
         Ok(())
     }
 
@@ -164,7 +165,17 @@ impl YieldAuction {
             .persistent()
             .set(&(symbol_short!("buyers"), id), &Vec::<Address>::new(&env));
 
+        Self::bump(&env, &(symbol_short!("seller"), id));
+        Self::bump(&env, &(symbol_short!("listed"), id));
+        Self::bump(&env, &(symbol_short!("energy"), id));
+        Self::bump(&env, &(symbol_short!("minprice"), id));
+        Self::bump(&env, &(symbol_short!("cleared"), id));
+        Self::bump(&env, &(symbol_short!("canceld"), id));
+        Self::bump(&env, &(symbol_short!("bids"), id));
+        Self::bump(&env, &(symbol_short!("buyers"), id));
+
         env.storage().instance().set(&symbol_short!("nAuction"), &next);
+        Self::bump_instance(&env);
         Ok(id)
     }
 
@@ -243,10 +254,13 @@ impl YieldAuction {
         env.storage()
             .persistent()
             .set(&(symbol_short!("bids"), auction_id), &bids);
+        Self::bump(&env, &(symbol_short!("buyers"), auction_id));
+        Self::bump(&env, &(symbol_short!("bids"), auction_id));
 
         env.storage()
             .instance()
             .set(&symbol_short!("nBidSeq"), &next_seq);
+        Self::bump_instance(&env);
         Ok(())
     }
 
@@ -312,6 +326,8 @@ impl YieldAuction {
         env.storage()
             .persistent()
             .set(&(symbol_short!("cleared"), auction_id), &true);
+        Self::bump(&env, &(symbol_short!("energy"), auction_id));
+        Self::bump(&env, &(symbol_short!("cleared"), auction_id));
 
         Ok(MatchResult {
             auction_id,
@@ -364,6 +380,10 @@ impl YieldAuction {
         env.storage()
             .persistent()
             .set(&(symbol_short!("buyers"), auction_id), &Vec::<Address>::new(&env));
+        Self::bump(&env, &(symbol_short!("canceld"), auction_id));
+        Self::bump(&env, &(symbol_short!("energy"), auction_id));
+        Self::bump(&env, &(symbol_short!("bids"), auction_id));
+        Self::bump(&env, &(symbol_short!("buyers"), auction_id));
         Ok(())
     }
 
@@ -495,5 +515,32 @@ impl YieldAuction {
             i += 1;
         }
         order
+    }
+
+    /// Extends the ledger lifetime of a persistent entry that has just been
+    /// written. Deriving both bounds from the network maximum keeps the
+    /// renewal policy adaptive: an entry is renewed once less than half of its
+    /// life remains and is restored to the full maximum, and nothing has to be
+    /// configured at initialization.
+    fn bump(env: &Env, key: &(Symbol, u64)) {
+        let max = env.storage().max_ttl();
+        if max == 0 {
+            return;
+        }
+        env.storage().persistent().extend_ttl(key, max / 2, max);
+    }
+
+    /// Extends the ledger lifetime of the contract instance that has just been
+    /// written. Deriving both bounds from the network maximum keeps the
+    /// renewal policy adaptive: the configuration is renewed once less than half
+    /// of its life remains and is restored to the full maximum, and nothing has
+    /// to be configured at initialization. Instance storage expires as a single
+    /// ledger entry, so one renewal covers every key written by the caller.
+    fn bump_instance(env: &Env) {
+        let max = env.storage().max_ttl();
+        if max == 0 {
+            return;
+        }
+        env.storage().instance().extend_ttl(max / 2, max);
     }
 }

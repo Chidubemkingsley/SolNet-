@@ -1,4 +1,7 @@
-use soroban_sdk::{testutils::Address as _, Address, Env};
+use soroban_sdk::{
+    testutils::{storage::Instance as _, Address as _, Ledger as _},
+    Address, Env,
+};
 use solnet_peak_load_adjuster::{Error, PeakLoadAdjuster, PeakLoadAdjusterClient};
 
 fn setup_with(base_price: i128, floor_price: i128) -> (Env, Address, PeakLoadAdjusterClient<'static>) {
@@ -13,6 +16,26 @@ fn setup_with(base_price: i128, floor_price: i128) -> (Env, Address, PeakLoadAdj
 
 fn setup() -> (Env, Address, PeakLoadAdjusterClient<'static>) {
     setup_with(100, 10)
+}
+
+/// Mirrors `setup` but also hands back the contract address, which the
+/// lifetime assertions below need in order to inspect the contract instance.
+fn setup_tracked() -> (Env, Address, Address, PeakLoadAdjusterClient<'static>) {
+    let e = Env::default();
+    e.mock_all_auths();
+    let admin = Address::generate(&e);
+    let id = e.register(PeakLoadAdjuster, ());
+    let client = PeakLoadAdjusterClient::new(&e, &id);
+    client.init(&admin, &100, &10);
+    (e, admin, id, client)
+}
+
+fn network_max_ttl(e: &Env, id: &Address) -> u32 {
+    e.as_contract(id, || e.storage().max_ttl())
+}
+
+fn instance_ttl(e: &Env, id: &Address) -> u32 {
+    e.as_contract(id, || e.storage().instance().get_ttl())
 }
 
 #[test]
@@ -316,4 +339,38 @@ fn floor_and_ceiling_never_intersect_across_reconfiguration() {
         Err(Ok(Error::NotAdmin))
     );
     assert_eq!(client.max_price(), 80);
+}
+
+#[test]
+fn configuration_writes_renew_the_lifetime_of_the_contract_instance() {
+    let (e, admin, id, client) = setup_tracked();
+    let max = network_max_ttl(&e, &id);
+    assert!(max > 0);
+    assert_eq!(instance_ttl(&e, &id), max);
+
+    client.update_soc(&admin, &5_000);
+    assert_eq!(instance_ttl(&e, &id), max);
+
+    client.set_max_price(&admin, &200);
+    let renewed = instance_ttl(&e, &id);
+    assert_eq!(renewed, max);
+    assert!(renewed > e.ledger().get().min_persistent_entry_ttl);
+}
+
+#[test]
+fn a_configuration_write_restores_a_decayed_contract_instance() {
+    let (e, admin, id, client) = setup_tracked();
+    let max = network_max_ttl(&e, &id);
+
+    e.ledger().with_mut(|l| l.sequence_number += max / 2 + 1);
+    let decayed = instance_ttl(&e, &id);
+    assert!(decayed < max);
+    assert_eq!(client.soc(), 10_000);
+
+    client.update_soc(&admin, &5_000);
+    assert_eq!(client.soc(), 5_000);
+    let renewed = instance_ttl(&e, &id);
+    assert_eq!(renewed, max);
+    assert!(renewed > decayed);
+    assert!(renewed > e.ledger().get().min_persistent_entry_ttl);
 }
