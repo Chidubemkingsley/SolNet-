@@ -1,0 +1,265 @@
+use solnet_delinquency_disconnector::{
+    DelinquencyDisconnector, DelinquencyDisconnectorClient, Error, Verdict,
+};
+use soroban_sdk::{testutils::Address as _, testutils::Ledger as _, vec, Address, Env};
+
+fn setup_with_grace(grace_period: u64) -> (Env, Address, DelinquencyDisconnectorClient<'static>) {
+    let e = Env::default();
+    e.mock_all_auths();
+    let admin = Address::generate(&e);
+    let id = e.register(DelinquencyDisconnector, ());
+    let client = DelinquencyDisconnectorClient::new(&e, &id);
+    client.init(&admin, &grace_period);
+    (e, admin, client)
+}
+
+fn setup() -> (Env, Address, DelinquencyDisconnectorClient<'static>) {
+    setup_with_grace(100)
+}
+
+#[test]
+fn init_stores_admin_and_grace_period() {
+    let (e, admin, client) = setup();
+    assert_eq!(client.admin(), admin);
+    assert_eq!(client.grace_period(), 100);
+    let account = Address::generate(&e);
+    assert!(!client.is_delinquent(&account));
+    assert_eq!(client.delinquent_since(&account), 0);
+}
+
+#[test]
+fn init_rejects_second_initialization() {
+    let (e, admin, client) = setup();
+    let other = Address::generate(&e);
+    assert_eq!(
+        client.try_init(&other, &5),
+        Err(Ok(Error::AlreadyInitialized))
+    );
+    assert_eq!(client.grace_period(), 100);
+    assert_eq!(client.admin(), admin);
+}
+
+#[test]
+fn mark_delinquent_requires_admin_authority() {
+    let (e, admin, client) = setup();
+    let account = Address::generate(&e);
+    let impostor = Address::generate(&e);
+
+    assert_eq!(
+        client.try_mark_delinquent(&impostor, &account, &10),
+        Err(Ok(Error::NotAdmin))
+    );
+    assert!(!client.is_delinquent(&account));
+
+    client.mark_delinquent(&admin, &account, &10);
+    assert!(client.is_delinquent(&account));
+
+    assert_eq!(
+        client.try_clear(&impostor, &account),
+        Err(Ok(Error::NotAdmin))
+    );
+    assert!(client.is_delinquent(&account));
+}
+
+#[test]
+fn mark_delinquent_records_first_ledger_sequence() {
+    let (e, admin, client) = setup();
+    let account = Address::generate(&e);
+    client.mark_delinquent(&admin, &account, &500);
+    assert!(client.is_delinquent(&account));
+    assert_eq!(client.delinquent_since(&account), 500);
+}
+
+#[test]
+fn re_marking_preserves_the_original_grace_clock() {
+    let (e, admin, client) = setup();
+    let account = Address::generate(&e);
+    client.mark_delinquent(&admin, &account, &100);
+    client.mark_delinquent(&admin, &account, &900);
+
+    assert_eq!(client.delinquent_since(&account), 100);
+    assert_eq!(client.verdict(&account, &-500, &150), Verdict::GracePeriod);
+    assert_eq!(client.verdict(&account, &-500, &200), Verdict::Disconnect);
+}
+
+#[test]
+fn mark_delinquent_rejects_zero_ledger_sequence() {
+    let (e, admin, client) = setup();
+    let account = Address::generate(&e);
+    assert_eq!(
+        client.try_mark_delinquent(&admin, &account, &0),
+        Err(Ok(Error::InvalidLedgerSeq))
+    );
+    assert!(!client.is_delinquent(&account));
+    assert_eq!(client.delinquent_since(&account), 0);
+
+    client.mark_delinquent(&admin, &account, &1);
+    assert_eq!(client.delinquent_since(&account), 1);
+}
+
+#[test]
+fn verdict_is_not_delinquent_for_non_negative_balance() {
+    let (e, admin, client) = setup();
+    let account = Address::generate(&e);
+    let healthy = Address::generate(&e);
+    client.mark_delinquent(&admin, &account, &100);
+
+    assert_eq!(client.verdict(&account, &0, &500), Verdict::NotDelinquent);
+    assert_eq!(
+        client.verdict(&account, &1_000_000, &500),
+        Verdict::NotDelinquent
+    );
+    assert_eq!(
+        client.verdict(&healthy, &1_000_000, &500),
+        Verdict::NotDelinquent
+    );
+    assert!(client.is_delinquent(&account));
+}
+
+#[test]
+fn verdict_is_not_delinquent_before_the_account_is_marked() {
+    let (e, _admin, client) = setup();
+    let account = Address::generate(&e);
+    assert_eq!(
+        client.verdict(&account, &-1_000, &10_000),
+        Verdict::NotDelinquent
+    );
+    assert_eq!(
+        client.try_issue_disconnect(&account),
+        Err(Ok(Error::NotDelinquent))
+    );
+}
+
+#[test]
+fn verdict_reports_grace_period_before_window_elapses() {
+    let (e, admin, client) = setup();
+    let account = Address::generate(&e);
+    client.mark_delinquent(&admin, &account, &100);
+
+    assert_eq!(client.verdict(&account, &-1, &100), Verdict::GracePeriod);
+    assert_eq!(
+        client.verdict(&account, &-999_999, &150),
+        Verdict::GracePeriod
+    );
+    assert_eq!(client.verdict(&account, &-1, &199), Verdict::GracePeriod);
+    assert_eq!(client.verdict(&account, &5, &199), Verdict::NotDelinquent);
+}
+
+#[test]
+fn verdict_boundary_is_exact_at_the_grace_period() {
+    let (e, admin, client) = setup();
+    let account = Address::generate(&e);
+    client.mark_delinquent(&admin, &account, &100);
+
+    assert_eq!(client.verdict(&account, &-1, &199), Verdict::GracePeriod);
+    assert_eq!(client.verdict(&account, &-1, &200), Verdict::Disconnect);
+    assert_eq!(
+        client.verdict(&account, &-1, &1_000_000),
+        Verdict::Disconnect
+    );
+
+    let (e2, admin2, strict) = setup_with_grace(0);
+    let instant = Address::generate(&e2);
+    strict.mark_delinquent(&admin2, &instant, &100);
+    assert_eq!(strict.grace_period(), 0);
+    assert_eq!(strict.verdict(&instant, &-1, &100), Verdict::Disconnect);
+}
+
+#[test]
+fn verdict_rejects_sequence_going_backwards() {
+    let (e, admin, client) = setup();
+    let account = Address::generate(&e);
+    client.mark_delinquent(&admin, &account, &500);
+
+    assert_eq!(
+        client.try_verdict(&account, &-1, &499),
+        Err(Ok(Error::SequenceUnderflow))
+    );
+    assert_eq!(client.verdict(&account, &-1, &500), Verdict::GracePeriod);
+    assert_eq!(client.verdict(&account, &0, &1), Verdict::NotDelinquent);
+}
+
+#[test]
+fn issue_disconnect_rejects_healthy_accounts() {
+    let (e, admin, client) = setup();
+    let account = Address::generate(&e);
+
+    assert_eq!(
+        client.try_issue_disconnect(&account),
+        Err(Ok(Error::NotDelinquent))
+    );
+
+    client.mark_delinquent(&admin, &account, &100);
+    client.clear(&admin, &account);
+    assert_eq!(
+        client.try_issue_disconnect(&account),
+        Err(Ok(Error::NotDelinquent))
+    );
+}
+
+#[test]
+fn issue_disconnect_is_deterministic_and_account_bound() {
+    let (e, admin, client) = setup();
+    let first = Address::generate(&e);
+    let second = Address::generate(&e);
+    client.mark_delinquent(&admin, &first, &100);
+    client.mark_delinquent(&admin, &second, &100);
+
+    let a = client.issue_disconnect(&first);
+    let b = client.issue_disconnect(&first);
+    assert_eq!(a, b);
+    assert_ne!(a, client.issue_disconnect(&second));
+
+    let others = vec![&e, Address::generate(&e), Address::generate(&e)];
+    for account in others.iter() {
+        client.mark_delinquent(&admin, &account, &100);
+        assert!(a != client.issue_disconnect(&account));
+    }
+}
+
+#[test]
+fn issue_disconnect_tracks_the_current_ledger_sequence() {
+    let (e, admin, client) = setup();
+    let account = Address::generate(&e);
+    client.mark_delinquent(&admin, &account, &100);
+
+    e.ledger().set_sequence_number(64);
+    let at_64 = client.issue_disconnect(&account);
+    assert_eq!(at_64, client.issue_disconnect(&account));
+
+    e.ledger().set_sequence_number(65);
+    let at_65 = client.issue_disconnect(&account);
+    assert_ne!(at_64, at_65);
+
+    e.ledger().set_sequence_number(64);
+    assert_eq!(client.issue_disconnect(&account), at_64);
+}
+
+#[test]
+fn clear_resets_delinquency_state() {
+    let (e, admin, client) = setup();
+    let account = Address::generate(&e);
+    let never = Address::generate(&e);
+    client.mark_delinquent(&admin, &account, &100);
+
+    assert_eq!(client.verdict(&account, &-500, &1_000), Verdict::Disconnect);
+    client.clear(&admin, &account);
+    assert!(!client.is_delinquent(&account));
+    assert_eq!(client.delinquent_since(&account), 0);
+    assert_eq!(
+        client.verdict(&account, &-500, &1_000),
+        Verdict::NotDelinquent
+    );
+    assert_eq!(
+        client.try_clear(&admin, &account),
+        Err(Ok(Error::NotDelinquent))
+    );
+
+    client.mark_delinquent(&admin, &account, &2_000);
+    assert_eq!(client.delinquent_since(&account), 2_000);
+    assert_eq!(
+        client.try_clear(&admin, &never),
+        Err(Ok(Error::NotDelinquent))
+    );
+    assert!(!client.is_delinquent(&never));
+}

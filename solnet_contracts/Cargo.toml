@@ -1,0 +1,16 @@
+[workspace]
+resolver = "2"
+members = [
+    "grid_topology",
+    "account_ledger",
+    "micro_billing",
+    "delinquency_disconnector",
+    "yield_auction",
+    "peak_load_adjuster",
+    "battery_pool",
+    "community_capital",
+    "iot_registrar",
+    "cryptographic_oracle",
+    "firmware_verifier",
+    "hardware_slash",
+]
