@@ -9,7 +9,7 @@ import {
   Activity, ArrowDownToLine, BatteryCharging, Blocks, BookOpenCheck, Box, Cable,
   ChevronRight, CircleDollarSign, Cpu, Database, FileClock, FileText, Gauge,
   HardDrive, Landmark, Menu, Network, Radio, RefreshCw, ShieldAlert, SlidersHorizontal,
-  Sparkles, Vote, Wallet, X, Zap, Settings as SettingsIcon, Wrench, ChartNoAxesCombined,
+  Sparkles, Vote, Wallet, X, Zap, Settings, Settings as SettingsIcon, Wrench, ChartNoAxesCombined,
   Globe, Leaf, Lightning, Shield, Users, BarChart, Zap as ZapIcon,
 } from 'lucide-react';
 import {
