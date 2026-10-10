@@ -13,4 +13,5 @@ members = [
     "cryptographic_oracle",
     "firmware_verifier",
     "hardware_slash",
+    "integration_tests",
 ]

@@ -22,6 +22,8 @@ pub enum Error {
     InsufficientCredits = 6,
     InsufficientFunds = 7,
     ArithmeticOverflow = 8,
+    NotARouter = 9,
+    AlreadyARouter = 10,
 }
 
 #[contract]
@@ -149,6 +151,78 @@ impl AccountLedger {
             .persistent()
             .set(&(symbol_short!("wat"), account.clone()), &next);
         Ok(next)
+    }
+
+    /// Grants a billing router the capability to charge consumption against
+    /// accounts on this ledger. Only an authorized router may call
+    /// `apply_consumption`. This is what lets the micro-billing router debit a
+    /// shared ledger without being handed the ledger administrator key.
+    pub fn authorize_router(env: Env, admin: Address, router: Address) -> Result<(), Error> {
+        Self::require_admin_auth(&env, &admin)?;
+        Self::require_configured(&env)?;
+        if Self::is_router_of(&env, &router) {
+            return Err(Error::AlreadyARouter);
+        }
+        env.storage()
+            .persistent()
+            .set(&(symbol_short!("rtr"), router), &true);
+        Ok(())
+    }
+
+    /// Revokes a previously granted billing router capability.
+    pub fn revoke_router(env: Env, admin: Address, router: Address) -> Result<(), Error> {
+        Self::require_admin_auth(&env, &admin)?;
+        Self::require_configured(&env)?;
+        if !Self::is_router_of(&env, &router) {
+            return Err(Error::NotARouter);
+        }
+        env.storage()
+            .persistent()
+            .remove(&(symbol_short!("rtr"), router));
+        Ok(())
+    }
+
+    /// Reports whether an address currently holds the billing router capability.
+    pub fn is_router(env: Env, router: Address) -> bool {
+        Self::is_router_of(&env, &router)
+    }
+
+    /// Burns Watt-credits against an account on behalf of an authorized billing
+    /// router. The balance is permitted to fall below zero, which is how accrued
+    /// supply debt becomes visible to the delinquency disconnector.
+    ///
+    /// Debit-only by construction: `credits` must be strictly positive, so a
+    /// router can charge an account but can never credit it. Returns the
+    /// resulting Watt-credit balance.
+    pub fn apply_consumption(
+        env: Env,
+        router: Address,
+        account: Address,
+        credits: i128,
+    ) -> Result<i128, Error> {
+        Self::require_configured(&env)?;
+        if credits <= 0 {
+            return Err(Error::InvalidAmount);
+        }
+        if !Self::is_router_of(&env, &router) {
+            return Err(Error::NotARouter);
+        }
+        router.require_auth();
+
+        let next = Self::watt_balance_of(&env, &account)
+            .checked_sub(credits)
+            .ok_or(Error::ArithmeticOverflow)?;
+        env.storage()
+            .persistent()
+            .set(&(symbol_short!("wat"), account), &next);
+        Ok(next)
+    }
+
+    fn is_router_of(env: &Env, router: &Address) -> bool {
+        env.storage()
+            .persistent()
+            .get(&(symbol_short!("rtr"), router))
+            .unwrap_or(false)
     }
 
     /// Stablecoin balance held by an account, in the smallest currency unit.

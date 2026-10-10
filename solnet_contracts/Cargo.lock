@@ -1360,6 +1360,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "solnet_integration_tests"
+version = "0.1.0"
+dependencies = [
+ "solnet_account_ledger",
+ "solnet_delinquency_disconnector",
+ "solnet_micro_billing",
+ "soroban-sdk",
+]
+
+[[package]]
 name = "solnet_iot_registrar"
 version = "0.1.0"
 dependencies = [

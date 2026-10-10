@@ -3,11 +3,18 @@
 
 #![no_std]
 
-use soroban_sdk::{contract, contracterror, contractimpl, symbol_short, Address, Env};
+use soroban_sdk::{
+    contract, contracterror, contractimpl, symbol_short, vec, Address, Env, IntoVal, Symbol, Val,
+    Vec,
+};
 
 /// Readings are reported in milli-watt-hours while the tariff is quoted per
 /// watt-hour, so the charge is divided by 1000.
 const CHARGE_SCALE: i128 = 1_000;
+
+/// Mirrors the scale factor the account ledger uses to express its
+/// Watt-credit conversion rate. Must stay in lockstep with that contract.
+const RATE_SCALE: i128 = 1_000_000;
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -21,6 +28,8 @@ pub enum Error {
     NodeMismatch = 6,
     NothingToSettle = 7,
     ArithmeticOverflow = 8,
+    LedgerCallFailed = 9,
+    RouterNotAuthorized = 10,
 }
 
 #[contract]
@@ -56,6 +65,50 @@ impl MicroBilling {
     /// Returns the configured price of one watt-hour in the smallest currency unit.
     pub fn price(env: Env) -> Result<i128, Error> {
         Self::require_configured(&env)
+    }
+
+    /// Points this router at the shared account ledger it bills against. Until
+    /// this is called the router operates standalone and accumulates unsettled
+    /// charges without debiting any account, which is the correct behaviour for
+    /// a grid that has not yet settled its accounts with a settlement rail.
+    ///
+    /// The ledger's Watt-credit conversion rate is captured here rather than
+    /// re-read on every reading. That is safe because the ledger fixes its rate
+    /// at initialization and exposes no setter, so the cached value cannot go
+    /// stale. It also keeps telemetry ingestion to a single cross-contract call
+    /// per reading, which matters for the high-frequency path.
+    pub fn wire(env: Env, admin: Address, ledger: Address) -> Result<(), Error> {
+        Self::require_admin_auth(&env, &admin)?;
+        let self_addr = env.current_contract_address();
+        let ok = env
+            .try_invoke_contract::<i128, Error>(&ledger, &symbol_short!("rate"), vec![&env]);
+        let rate: i128 = match ok {
+            Ok(Ok(r)) => r,
+            _ => return Err(Error::LedgerCallFailed),
+        };
+        if rate <= 0 {
+            return Err(Error::LedgerCallFailed);
+        }
+        let authorized = env.try_invoke_contract::<bool, Error>(
+            &ledger,
+            &symbol_short!("is_router"),
+            vec![&env, self_addr.into_val(&env)],
+        );
+        let authorized: bool = match authorized {
+            Ok(Ok(b)) => b,
+            _ => return Err(Error::LedgerCallFailed),
+        };
+        if !authorized {
+            return Err(Error::RouterNotAuthorized);
+        }
+        env.storage().instance().set(&symbol_short!("ledg"), &ledger);
+        env.storage().instance().set(&symbol_short!("rat"), &rate);
+        Ok(())
+    }
+
+    /// The account ledger this router bills against, if one has been wired.
+    pub fn ledger(env: Env) -> Option<Address> {
+        env.storage().instance().get(&symbol_short!("ledg"))
     }
 
     /// Ingests a consumption payload emitted by a physical meter and charges the
@@ -101,6 +154,8 @@ impl MicroBilling {
             .checked_mul(price)
             .ok_or(Error::ArithmeticOverflow)?
             / CHARGE_SCALE;
+
+        Self::charge_ledger(&env, &account, charge)?;
 
         let unsettled = Self::unsettled_of(&env, &account)
             .checked_add(charge)
@@ -176,6 +231,50 @@ impl MicroBilling {
             .instance()
             .get(&symbol_short!("price"))
             .unwrap_or(0))
+    }
+
+    fn charge_ledger(env: &Env, account: &Address, charge: i128) -> Result<(), Error> {
+        let ledger: Option<Address> = env.storage().instance().get(&symbol_short!("ledg"));
+        let (ledger, rate) = match ledger {
+            Some(l) => {
+                let r: i128 = env
+                    .storage()
+                    .instance()
+                    .get(&symbol_short!("rat"))
+                    .unwrap_or(0);
+                (l, r)
+            }
+            None => return Ok(()),
+        };
+
+        let credits = charge
+            .checked_mul(rate)
+            .ok_or(Error::ArithmeticOverflow)?
+            / RATE_SCALE;
+
+        if credits == 0 {
+            return Ok(());
+        }
+
+        let mut args: Vec<Val> = Vec::new(env);
+        args.push_back(env.current_contract_address().into_val(env));
+        args.push_back(account.clone().into_val(env));
+        args.push_back(credits.into_val(env));
+        let fn_name = Symbol::new(env, "apply_consumption");
+        let res = env.try_invoke_contract::<i128, Error>(&ledger, &fn_name, args);
+        match res {
+            Ok(_) => Ok(()),
+            Err(_) => Err(Error::RouterNotAuthorized),
+        }
+    }
+
+    fn require_admin_auth(env: &Env, admin: &Address) -> Result<(), Error> {
+        let stored = Self::require_admin(env)?;
+        if &stored != admin {
+            return Err(Error::NotAdmin);
+        }
+        admin.require_auth();
+        Ok(())
     }
 
     fn require_admin(env: &Env) -> Result<Address, Error> {

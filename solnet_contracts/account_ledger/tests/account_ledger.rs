@@ -266,3 +266,276 @@ fn zero_credit_and_arithmetic_overflow_are_rejected() {
     );
     assert_eq!(client.watt_balance(&account), i128::MIN);
 }
+
+#[test]
+fn authorize_router_grants_the_billing_capability() {
+    let (e, admin, client) = setup();
+    let router = Address::generate(&e);
+    assert!(!client.is_router(&router));
+
+    client.authorize_router(&admin, &router);
+    assert!(client.is_router(&router));
+}
+
+#[test]
+fn authorize_router_rejects_a_duplicate_grant() {
+    let (e, admin, client) = setup();
+    let router = Address::generate(&e);
+    let second = Address::generate(&e);
+    client.authorize_router(&admin, &router);
+
+    assert_eq!(
+        client.try_authorize_router(&admin, &router),
+        Err(Ok(Error::AlreadyARouter))
+    );
+    assert!(client.is_router(&router));
+    assert!(!client.is_router(&second));
+
+    client.authorize_router(&admin, &second);
+    assert!(client.is_router(&router));
+    assert!(client.is_router(&second));
+}
+
+#[test]
+fn authorize_router_requires_admin_authority() {
+    let (e, admin, client) = setup();
+    let router = Address::generate(&e);
+    let impostor = Address::generate(&e);
+
+    assert_eq!(
+        client.try_authorize_router(&impostor, &router),
+        Err(Ok(Error::NotAdmin))
+    );
+    assert!(!client.is_router(&router));
+
+    client.authorize_router(&admin, &router);
+    assert!(client.is_router(&router));
+}
+
+#[test]
+fn is_router_is_scoped_to_the_authorized_addresses() {
+    let (e, admin, client) = setup();
+    let router = Address::generate(&e);
+    let others = vec![&e, Address::generate(&e), Address::generate(&e)];
+    for other in others.iter() {
+        assert!(!client.is_router(&other));
+    }
+
+    client.authorize_router(&admin, &router);
+    assert!(client.is_router(&router));
+    for other in others.iter() {
+        assert!(!client.is_router(&other));
+    }
+}
+
+#[test]
+fn revoke_router_removes_the_billing_capability() {
+    let (e, admin, client) = setup();
+    let router = Address::generate(&e);
+    let other = Address::generate(&e);
+    client.authorize_router(&admin, &router);
+    client.authorize_router(&admin, &other);
+
+    client.revoke_router(&admin, &router);
+    assert!(!client.is_router(&router));
+    assert!(client.is_router(&other));
+
+    client.authorize_router(&admin, &router);
+    assert!(client.is_router(&router));
+}
+
+#[test]
+fn revoke_router_rejects_an_unknown_router() {
+    let (e, admin, client) = setup();
+    let stranger = Address::generate(&e);
+
+    assert_eq!(
+        client.try_revoke_router(&admin, &stranger),
+        Err(Ok(Error::NotARouter))
+    );
+
+    let router = Address::generate(&e);
+    client.authorize_router(&admin, &router);
+    client.revoke_router(&admin, &router);
+    assert_eq!(
+        client.try_revoke_router(&admin, &router),
+        Err(Ok(Error::NotARouter))
+    );
+}
+
+#[test]
+fn revoke_router_requires_admin_authority() {
+    let (e, admin, client) = setup();
+    let router = Address::generate(&e);
+    let impostor = Address::generate(&e);
+    client.authorize_router(&admin, &router);
+
+    assert_eq!(
+        client.try_revoke_router(&impostor, &router),
+        Err(Ok(Error::NotAdmin))
+    );
+    assert!(client.is_router(&router));
+
+    client.revoke_router(&admin, &router);
+    assert!(!client.is_router(&router));
+}
+
+#[test]
+fn apply_consumption_debits_watt_credits_and_returns_the_new_balance() {
+    let (e, admin, client) = setup();
+    let router = Address::generate(&e);
+    let account = Address::generate(&e);
+    client.authorize_router(&admin, &router);
+    client.deposit(&account, &100);
+
+    assert_eq!(client.apply_consumption(&router, &account, &30), 70);
+    assert_eq!(client.watt_balance(&account), 70);
+    assert_eq!(client.stable_balance(&account), 100);
+
+    assert_eq!(client.apply_consumption(&router, &account, &20), 50);
+    assert_eq!(client.watt_balance(&account), 50);
+    assert_eq!(client.stable_balance(&account), 100);
+}
+
+#[test]
+fn apply_consumption_rejects_a_non_router() {
+    let (e, admin, client) = setup();
+    let account = Address::generate(&e);
+    client.deposit(&account, &100);
+    let stranger = Address::generate(&e);
+
+    assert_eq!(
+        client.try_apply_consumption(&stranger, &account, &10),
+        Err(Ok(Error::NotARouter))
+    );
+    assert_eq!(client.watt_balance(&account), 100);
+
+    client.authorize_router(&admin, &stranger);
+    assert_eq!(
+        client.try_apply_consumption(&admin, &account, &10),
+        Err(Ok(Error::NotARouter))
+    );
+    assert_eq!(client.watt_balance(&account), 100);
+}
+
+#[test]
+fn apply_consumption_rejects_zero_and_negative_credits() {
+    let (e, admin, client) = setup();
+    let router = Address::generate(&e);
+    let account = Address::generate(&e);
+    client.authorize_router(&admin, &router);
+    client.deposit(&account, &100);
+
+    assert_eq!(
+        client.try_apply_consumption(&router, &account, &0),
+        Err(Ok(Error::InvalidAmount))
+    );
+    assert_eq!(
+        client.try_apply_consumption(&router, &account, &-50),
+        Err(Ok(Error::InvalidAmount))
+    );
+    assert_eq!(client.watt_balance(&account), 100);
+    assert_eq!(client.stable_balance(&account), 100);
+}
+
+#[test]
+fn apply_consumption_validates_the_amount_before_the_router_capability() {
+    let (e, _admin, client) = setup();
+    let account = Address::generate(&e);
+    let stranger = Address::generate(&e);
+
+    assert_eq!(
+        client.try_apply_consumption(&stranger, &account, &0),
+        Err(Ok(Error::InvalidAmount))
+    );
+    assert_eq!(
+        client.try_apply_consumption(&stranger, &account, &-1),
+        Err(Ok(Error::InvalidAmount))
+    );
+    assert_eq!(client.watt_balance(&account), 0);
+}
+
+#[test]
+fn apply_consumption_can_drive_watt_balance_negative() {
+    let (e, admin, client) = setup();
+    let router = Address::generate(&e);
+    let account = Address::generate(&e);
+    client.authorize_router(&admin, &router);
+    client.deposit(&account, &5);
+
+    assert_eq!(client.apply_consumption(&router, &account, &10), -5);
+    assert_eq!(client.watt_balance(&account), -5);
+    assert_eq!(client.stable_balance(&account), 5);
+    assert_eq!(
+        client.try_withdraw(&account, &1),
+        Err(Ok(Error::InsufficientCredits))
+    );
+
+    assert_eq!(client.apply_consumption(&router, &account, &5), -10);
+    assert_eq!(client.watt_balance(&account), -10);
+}
+
+#[test]
+fn apply_consumption_guards_against_arithmetic_overflow() {
+    let (e, admin, client) = setup();
+    let router = Address::generate(&e);
+    let account = Address::generate(&e);
+    client.authorize_router(&admin, &router);
+    client.credit_watts(&admin, &account, &i128::MIN);
+    assert_eq!(client.watt_balance(&account), i128::MIN);
+
+    assert_eq!(
+        client.try_apply_consumption(&router, &account, &1),
+        Err(Ok(Error::ArithmeticOverflow))
+    );
+    assert_eq!(client.watt_balance(&account), i128::MIN);
+
+    assert_eq!(
+        client.try_apply_consumption(&router, &account, &i128::MAX),
+        Err(Ok(Error::ArithmeticOverflow))
+    );
+    assert_eq!(client.watt_balance(&account), i128::MIN);
+
+    let healthy = Address::generate(&e);
+    assert_eq!(client.apply_consumption(&router, &healthy, &1), -1);
+    assert_eq!(client.watt_balance(&healthy), -1);
+}
+
+#[test]
+fn apply_consumption_requires_router_authorization() {
+    let (e, admin, client) = setup();
+    let router = Address::generate(&e);
+    let account = Address::generate(&e);
+    client.authorize_router(&admin, &router);
+    client.deposit(&account, &100);
+
+    e.set_auths(&[]);
+    assert!(client
+        .try_apply_consumption(&router, &account, &10)
+        .is_err());
+
+    e.mock_all_auths();
+    assert_eq!(client.watt_balance(&account), 100);
+    assert_eq!(client.apply_consumption(&router, &account, &10), 90);
+}
+
+#[test]
+fn revoked_router_can_no_longer_charge() {
+    let (e, admin, client) = setup();
+    let router = Address::generate(&e);
+    let account = Address::generate(&e);
+    client.authorize_router(&admin, &router);
+    client.deposit(&account, &100);
+    assert_eq!(client.apply_consumption(&router, &account, &10), 90);
+
+    client.revoke_router(&admin, &router);
+    assert!(!client.is_router(&router));
+    assert_eq!(
+        client.try_apply_consumption(&router, &account, &10),
+        Err(Ok(Error::NotARouter))
+    );
+    assert_eq!(client.watt_balance(&account), 90);
+
+    client.authorize_router(&admin, &router);
+    assert_eq!(client.apply_consumption(&router, &account, &10), 80);
+}

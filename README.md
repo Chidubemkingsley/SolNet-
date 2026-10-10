@@ -63,6 +63,35 @@ SolNet bypasses monolithic design vulnerabilities by dividing responsibilities i
 | 11 | `firmware_verifier` | Hardware & Cryptographic Security | Verifies that active field hardware exactly matches community-approved, open-source firmware hashes. |
 | 12 | `hardware_slash` | Hardware & Cryptographic Security | Punishes malicious actors by seizing the collateral deposits of meters attempting to spoof generation numbers or bypass routers. |
 
+### The Consumption Loop
+
+The three settlement contracts are wired to each other on-chain. This is the path a metered reading actually takes:
+
+```
+   meter reading                account_ledger            delinquency_disconnector
+   (physical meter)              (shared balances)        (enforcement)
+         │                             │                          │
+         ▼                             ▲                          ▼
+  micro_billing ──apply_consumption──▶ │ ◀──watt_balance──────  assess()
+         │                             │                          │
+         │                             │                    ┌─────┴─────┐
+         └─────────────────────────────┘                    │           │
+                                             GracePeriod  │           │ Disconnect
+                                             (meter still  │           │ (signed relay
+                                              running)     │           │  instruction)
+```
+
+- `micro_billing.record()` prices the reading and calls `apply_consumption` on the ledger, converting the charge into Watt-credits at the ledger's rate.
+- The ledger permits the balance to fall **negative**, which is how unpaid debt becomes visible rather than the reading being rejected.
+- `delinquency_disconnector.assess()` reads that live balance. A negative balance starts a grace clock; once it elapses, `issue_disconnect()` emits a deterministic 32-byte instruction for the physical meter relay.
+
+Two deliberate safety properties:
+
+- **`apply_consumption` is debit-only.** `credits` must be strictly positive, so an authorized router can charge an account but can never credit it.
+- **Wiring is verified, not assumed.** A router must be granted the billing capability by the ledger administrator before it may charge, and both `wire` functions probe the target and reject an uninitialized one.
+
+Delinquency marks track current state rather than latching: an account that repays is unmarked, so re-entering debt always earns a fresh grace window rather than inheriting an already-expired one.
+
 ---
 
 ## ⚙️ Quick Start & Local Deployment
@@ -100,7 +129,7 @@ cargo test --manifest-path solnet_contracts/Cargo.toml --workspace
 
 ### 3. Deploy to Standalone Network
 
-The deployment script generates an administrative keypair, installs all 12 compiled `.wasm` binaries onto the ledger, and invokes each module's initialization hook with its own configuration arguments.
+The deployment script generates an administrative keypair, installs all 12 compiled `.wasm` binaries onto the ledger, invokes each module's initialization hook with its own configuration arguments, and then wires the consumption loop above.
 
 ```bash
 chmod +x deploy.sh

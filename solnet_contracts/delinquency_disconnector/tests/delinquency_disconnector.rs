@@ -263,3 +263,129 @@ fn clear_resets_delinquency_state() {
     );
     assert!(!client.is_delinquent(&never));
 }
+
+#[test]
+fn ledger_is_none_before_wiring() {
+    let (e, admin, client) = setup();
+    let account = Address::generate(&e);
+
+    assert_eq!(client.ledger(), None);
+    client.mark_delinquent(&admin, &account, &100);
+    assert_eq!(client.ledger(), None);
+}
+
+#[test]
+fn wire_requires_admin_authority() {
+    let (e, _admin, client) = setup();
+    let target = Address::generate(&e);
+    let impostor = Address::generate(&e);
+
+    assert_eq!(
+        client.try_wire(&impostor, &target),
+        Err(Ok(Error::NotAdmin))
+    );
+    assert_eq!(client.ledger(), None);
+}
+
+#[test]
+fn wire_rejects_before_initialization() {
+    let e = Env::default();
+    e.mock_all_auths();
+    let admin = Address::generate(&e);
+    let target = Address::generate(&e);
+    let id = e.register(DelinquencyDisconnector, ());
+    let client = DelinquencyDisconnectorClient::new(&e, &id);
+
+    assert_eq!(client.try_wire(&admin, &target), Err(Ok(Error::NotAdmin)));
+    assert_eq!(client.ledger(), None);
+}
+
+#[test]
+fn wire_rejects_a_target_that_is_not_an_account_ledger() {
+    let (e, admin, client) = setup();
+    let target = Address::generate(&e);
+
+    assert_eq!(
+        client.try_wire(&admin, &target),
+        Err(Ok(Error::LedgerCallFailed))
+    );
+    assert_eq!(client.ledger(), None);
+}
+
+#[test]
+fn wire_rejects_a_target_contract_that_does_not_expose_a_rate() {
+    let (e, admin, client) = setup();
+    let target = e.register(DelinquencyDisconnector, ());
+
+    assert_eq!(
+        client.try_wire(&admin, &target),
+        Err(Ok(Error::LedgerCallFailed))
+    );
+    assert_eq!(client.ledger(), None);
+}
+
+#[test]
+fn a_failed_wire_leaves_the_disconnector_unwired() {
+    let (e, admin, client) = setup();
+    let account = Address::generate(&e);
+    let target = Address::generate(&e);
+
+    for _ in 0..3 {
+        assert_eq!(
+            client.try_wire(&admin, &target),
+            Err(Ok(Error::LedgerCallFailed))
+        );
+    }
+    assert_eq!(client.ledger(), None);
+    assert_eq!(
+        client.try_assess(&account, &0),
+        Err(Ok(Error::LedgerCallFailed))
+    );
+    assert!(!client.is_delinquent(&account));
+    assert_eq!(client.delinquent_since(&account), 0);
+}
+
+#[test]
+fn assess_requires_a_wired_ledger() {
+    let (e, _admin, client) = setup();
+    let account = Address::generate(&e);
+
+    assert_eq!(
+        client.try_assess(&account, &0),
+        Err(Ok(Error::LedgerCallFailed))
+    );
+    assert_eq!(
+        client.try_assess(&account, &1_000_000),
+        Err(Ok(Error::LedgerCallFailed))
+    );
+    assert!(!client.is_delinquent(&account));
+    assert_eq!(client.delinquent_since(&account), 0);
+    assert_eq!(
+        client.try_issue_disconnect(&account),
+        Err(Ok(Error::NotDelinquent))
+    );
+}
+
+#[test]
+fn assess_rejects_before_initialization() {
+    let e = Env::default();
+    e.mock_all_auths();
+    let account = Address::generate(&e);
+    let id = e.register(DelinquencyDisconnector, ());
+    let client = DelinquencyDisconnectorClient::new(&e, &id);
+
+    assert_eq!(client.try_assess(&account, &0), Err(Ok(Error::NotAdmin)));
+    assert_eq!(client.ledger(), None);
+}
+
+#[test]
+fn verdict_remains_available_before_wiring() {
+    let (e, admin, client) = setup();
+    let account = Address::generate(&e);
+    client.mark_delinquent(&admin, &account, &100);
+
+    assert_eq!(client.ledger(), None);
+    assert_eq!(client.verdict(&account, &-500, &150), Verdict::GracePeriod);
+    assert_eq!(client.verdict(&account, &-500, &200), Verdict::Disconnect);
+    assert_eq!(client.issue_disconnect(&account).len(), 32);
+}

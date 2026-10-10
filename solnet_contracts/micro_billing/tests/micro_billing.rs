@@ -251,3 +251,105 @@ fn record_requires_account_authorization() {
     assert!(!client.seen_nonce(&account, &1));
     assert_eq!(client.record(&account, &1, &2_000, &1), 500);
 }
+
+#[test]
+fn ledger_is_none_before_wiring() {
+    let (e, _admin, client) = setup();
+    let account = Address::generate(&e);
+
+    assert_eq!(client.ledger(), None);
+    client.record(&account, &1, &2_000, &1);
+    assert_eq!(client.ledger(), None);
+}
+
+#[test]
+fn wire_requires_admin_authority() {
+    let (e, _admin, client) = setup();
+    let target = Address::generate(&e);
+    let impostor = Address::generate(&e);
+
+    assert_eq!(
+        client.try_wire(&impostor, &target),
+        Err(Ok(Error::NotAdmin))
+    );
+    assert_eq!(client.ledger(), None);
+}
+
+#[test]
+fn wire_rejects_before_initialization() {
+    let e = Env::default();
+    e.mock_all_auths();
+    let admin = Address::generate(&e);
+    let target = Address::generate(&e);
+    let id = e.register(MicroBilling, ());
+    let client = MicroBillingClient::new(&e, &id);
+
+    assert_eq!(client.try_wire(&admin, &target), Err(Ok(Error::NotAdmin)));
+    assert_eq!(client.ledger(), None);
+}
+
+#[test]
+fn wire_rejects_a_target_that_is_not_an_account_ledger() {
+    let (e, admin, client) = setup();
+    let target = Address::generate(&e);
+
+    assert_eq!(
+        client.try_wire(&admin, &target),
+        Err(Ok(Error::LedgerCallFailed))
+    );
+    assert_eq!(client.ledger(), None);
+}
+
+#[test]
+fn wire_rejects_a_target_contract_that_does_not_expose_a_rate() {
+    let (e, admin, client) = setup();
+    let target = e.register(MicroBilling, ());
+
+    assert_eq!(
+        client.try_wire(&admin, &target),
+        Err(Ok(Error::LedgerCallFailed))
+    );
+    assert_eq!(client.ledger(), None);
+}
+
+#[test]
+fn a_failed_wire_leaves_the_router_unwired() {
+    let (e, admin, client) = setup();
+    let account = Address::generate(&e);
+    let target = Address::generate(&e);
+
+    for _ in 0..3 {
+        assert_eq!(
+            client.try_wire(&admin, &target),
+            Err(Ok(Error::LedgerCallFailed))
+        );
+    }
+    assert_eq!(client.ledger(), None);
+
+    assert_eq!(client.record(&account, &1, &2_000, &1), 500);
+    assert_eq!(client.unsettled(&account), 500);
+    assert_eq!(client.reading_count(&account), 1);
+    assert_eq!(client.bound_node(&account), 1);
+    assert_eq!(client.settle(&account), 500);
+}
+
+#[test]
+fn record_accrues_charges_while_no_ledger_is_wired() {
+    let (e, _admin, client) = setup();
+    let account = Address::generate(&e);
+    let untouched = vec![&e, Address::generate(&e)];
+
+    client.record(&account, &1, &2_000, &1);
+    client.record(&account, &1, &1_000, &2);
+
+    assert_eq!(client.unsettled(&account), 750);
+    assert_eq!(client.reading_count(&account), 2);
+    for account in untouched.iter() {
+        assert_eq!(client.unsettled(&account), 0);
+        assert_eq!(client.reading_count(&account), 0);
+        assert_eq!(
+            client.try_bound_node(&account),
+            Err(Ok(Error::InvalidReading))
+        );
+    }
+}

@@ -5,6 +5,7 @@
 
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, Address, Bytes, BytesN, Env,
+    IntoVal, Symbol, Val, Vec,
 };
 
 /// Domain separation tag hashed into every relay instruction. Deliberately
@@ -25,6 +26,7 @@ pub enum Error {
     SequenceUnderflow = 4,
     InvalidLedgerSeq = 5,
     RelayEncodingFailed = 6,
+    LedgerCallFailed = 7,
 }
 
 #[contracttype]
@@ -102,6 +104,89 @@ impl DelinquencyDisconnector {
             .persistent()
             .set(&(symbol_short!("seq"), account), &ledger_seq);
         Ok(())
+    }
+
+    /// Points the disconnector at the account ledger it polices. Until this is
+    /// called, `assess` is unavailable and the operator must supply balances
+    /// explicitly through `verdict`.
+    pub fn wire(env: Env, admin: Address, ledger: Address) -> Result<(), Error> {
+        Self::require_admin_auth(&env, &admin)?;
+        let probe = env.try_invoke_contract::<i128, Error>(
+            &ledger,
+            &symbol_short!("rate"),
+            Vec::<Val>::new(&env),
+        );
+        let rate: i128 = match probe {
+            Ok(Ok(r)) => r,
+            _ => return Err(Error::LedgerCallFailed),
+        };
+        if rate <= 0 {
+            return Err(Error::LedgerCallFailed);
+        }
+        env.storage().instance().set(&symbol_short!("ledg"), &ledger);
+        Ok(())
+    }
+
+    /// The account ledger this disconnector polices, if one has been wired.
+    pub fn ledger(env: Env) -> Option<Address> {
+        env.storage().instance().get(&symbol_short!("ledg"))
+    }
+
+    /// Reads the live Watt-credit balance of an account from the wired ledger
+    /// and evaluates it. The delinquency mark tracks the account's current
+    /// state rather than latching: an account first observed with a negative
+    /// balance is marked at `current_seq`, starting its grace clock, and an
+    /// account observed back at a non-negative balance is unmarked. Re-entering
+    /// debt therefore always earns a fresh grace window instead of inheriting
+    /// an already-expired one, so a single anomalous reading after a repayment
+    /// cannot trigger an immediate cutoff.
+    ///
+    /// This is the entry point that closes the consumption loop end to end: a
+    /// metering reading drives the balance negative via the billing router, and
+    /// this reads that balance directly rather than trusting a caller.
+    pub fn assess(
+        env: Env,
+        account: Address,
+        current_seq: u64,
+    ) -> Result<Verdict, Error> {
+        Self::require_configured(&env)?;
+        let ledger: Address = env
+            .storage()
+            .instance()
+            .get(&symbol_short!("ledg"))
+            .ok_or(Error::LedgerCallFailed)?;
+
+        let mut args: Vec<Val> = Vec::new(&env);
+        args.push_back(account.clone().into_val(&env));
+        let read = env.try_invoke_contract::<i128, Error>(
+            &ledger,
+            &Symbol::new(&env, "watt_balance"),
+            args,
+        );
+        let balance: i128 = match read {
+            Ok(Ok(b)) => b,
+            _ => return Err(Error::LedgerCallFailed),
+        };
+
+        if balance < 0 {
+            if !Self::is_delinquent_of(&env, &account) {
+                env.storage()
+                    .persistent()
+                    .set(&(symbol_short!("dln"), account.clone()), &true);
+                env.storage()
+                    .persistent()
+                    .set(&(symbol_short!("seq"), account.clone()), &current_seq);
+            }
+        } else if Self::is_delinquent_of(&env, &account) {
+            env.storage()
+                .persistent()
+                .remove(&(symbol_short!("dln"), account.clone()));
+            env.storage()
+                .persistent()
+                .remove(&(symbol_short!("seq"), account.clone()));
+        }
+
+        Self::verdict(env, account, balance, current_seq)
     }
 
     /// Evaluates an account against a supplied balance and ledger sequence.

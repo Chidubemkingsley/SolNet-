@@ -48,6 +48,8 @@ CONTRACTS=(
 )
 
 # 6. Install and initialize every individual contract module
+declare -A DEPLOYED
+
 for c in "${CONTRACTS[@]}"; do
     echo "--------------------------------------------------"
     echo "🚀 Installing WASM bytecode for: $c"
@@ -66,6 +68,7 @@ for c in "${CONTRACTS[@]}"; do
         --network standalone)
 
     echo "✅ Deployed $c! ID: $CONTRACT_ID"
+    DEPLOYED[$c]="$CONTRACT_ID"
 
     # Invoke each module's initialization hook with its own arguments
     echo "⚙️  Initializing $c state machine..."
@@ -78,5 +81,36 @@ for c in "${CONTRACTS[@]}"; do
         init --admin "$ADMIN_ADDRESS" ${INIT_ARGS[$c]}
 done
 
+# 7. Wire the mesh together. Without this step the contracts deploy but stay
+#    inert: the billing router would never debit the ledger, and the
+#    disconnector would have no balances to police.
+echo "--------------------------------------------------"
+echo "🔗 Wiring cross-contract dependencies..."
+
+# The ledger must authorize the billing router before the router may charge it.
+stellar contract invoke \
+    --id "${DEPLOYED[account_ledger]}" \
+    --source admin_account \
+    --network standalone \
+    -- \
+    authorize_router --admin "$ADMIN_ADDRESS" "${DEPLOYED[micro_billing]}"
+
+# Billing router -> account ledger
+stellar contract invoke \
+    --id "${DEPLOYED[micro_billing]}" \
+    --source admin_account \
+    --network standalone \
+    -- \
+    wire --admin "$ADMIN_ADDRESS" "${DEPLOYED[account_ledger]}"
+
+# Disconnector -> account ledger
+stellar contract invoke \
+    --id "${DEPLOYED[delinquency_disconnector]}" \
+    --source admin_account \
+    --network standalone \
+    -- \
+    wire --admin "$ADMIN_ADDRESS" "${DEPLOYED[account_ledger]}"
+
 echo "=================================================="
 echo "🎉 Deployment Successful! All 12 contracts live."
+echo "🔗 Consumption loop wired: meter -> router -> ledger -> disconnector"
