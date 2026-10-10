@@ -45,7 +45,7 @@ impl CommunityCapital {
         if env.storage().instance().has(&symbol_short!("admin")) {
             return Err(Error::AlreadyInitialized);
         }
-        if yield_bps < 0 || yield_bps > MAX_YIELD_BPS {
+        if !(0..=MAX_YIELD_BPS).contains(&yield_bps) {
             return Err(Error::InvalidYieldBps);
         }
         admin.require_auth();
@@ -62,6 +62,7 @@ impl CommunityCapital {
     }
 
     /// Returns the administrator address of the fund.
+    #[allow(clippy::needless_question_mark)]
     pub fn admin(env: Env) -> Result<Address, Error> {
         Self::require_init(&env)?;
         Ok(env

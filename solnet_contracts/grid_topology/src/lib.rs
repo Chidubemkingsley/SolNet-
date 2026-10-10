@@ -181,7 +181,7 @@ impl GridTopology {
             .get(&(symbol_short!("nb"), b))
             .unwrap_or(Vec::new(&env));
 
-        if nb_a.contains(&b) || nb_b.contains(&a) {
+        if nb_a.contains(b) || nb_b.contains(a) {
             return Err(Error::DuplicateEdge);
         }
 
@@ -237,7 +237,7 @@ impl GridTopology {
                 if neighbor == b {
                     return Ok(true);
                 }
-                if !seen.contains(&neighbor) {
+                if !seen.contains(neighbor) {
                     seen.push_back(neighbor);
                     frontier.push_back(neighbor);
                 }

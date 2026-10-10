@@ -122,7 +122,7 @@ impl PeakLoadAdjuster {
     /// `0..=10000`. Only the administrator may move the reading.
     pub fn update_soc(env: Env, admin: Address, soc_bps: i128) -> Result<(), Error> {
         Self::require_admin_auth(&env, &admin)?;
-        if soc_bps < 0 || soc_bps > BPS_DENOM {
+        if !(0..=BPS_DENOM).contains(&soc_bps) {
             return Err(Error::InvalidSoc);
         }
         env.storage().instance().set(&symbol_short!("soc"), &soc_bps);

@@ -74,6 +74,7 @@ impl CryptographicOracle {
     }
 
     /// Returns the oracle administrator address.
+    #[allow(clippy::needless_question_mark)]
     pub fn admin(env: Env) -> Result<Address, Error> {
         Self::require_init(&env)?;
         Ok(env

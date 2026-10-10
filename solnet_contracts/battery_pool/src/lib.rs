@@ -52,7 +52,7 @@ impl BatteryPool {
         if env.storage().instance().has(&symbol_short!("admin")) {
             return Err(Error::AlreadyInitialized);
         }
-        if fee_bps < 0 || fee_bps > BPS_DENOM {
+        if !(0..=BPS_DENOM).contains(&fee_bps) {
             return Err(Error::InvalidFeeBps);
         }
         admin.require_auth();
