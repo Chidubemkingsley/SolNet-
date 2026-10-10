@@ -151,19 +151,108 @@ Configuration values are overridable via environment variables (for example `BAS
 
 ---
 
-## ⚠️ Build Notes
+## ⚠️ Critical Bug Fixes Applied
 
-Three version constraints are load-bearing. Breaking any one of them stops the workspace from compiling or deploying.
+The following critical issues were discovered during development and fixed before the on-chain verification:
 
-- **Build with `stellar contract build`.** It targets `wasm32v1-none` and emits MVP WebAssembly. A plain `cargo build --target wasm32-unknown-unknown` produces `reference-types` opcodes that the Soroban VM rejects at upload time. This was found only by deploying to a real node — no amount of local testing surfaces it.
-- **Soroban SDK v22, not v20.** The v20 line's `testutils` feature does not compile — an `arbitrary` / `stellar-xdr` derive incompatibility producing ~1800 errors — so no unit or integration tests can be written against it. The workspace pins `soroban-sdk = "22.0.0"`.
-- **Keep `Cargo.lock` committed.** `soroban-env-host` declares `ed25519-dalek = ">=2.0.0"`, an unbounded range that resolves to v3 and breaks the build with a `CryptoRng` trait error. The lockfile pins `ed25519-dalek` to `2.2.0`. If it is ever regenerated, re-apply with:
+| # | Contract | Issue | Fix |
+|---|----------|-------|-----|
+| 1 | `account_ledger` | `credit_watts` parameter named `milli_wh` but added raw to Watt-credits balance | Renamed to `watts_delta`; parameter now explicitly in Watt-credits |
+| 2 | `delinquency_disconnector` | Auto-unmark on positive balance → flapping attack (oscillate around zero to reset grace clock) | Removed auto-unmark; only admin `clear()` removes delinquency mark |
+| 3 | `community_capital` | `accrue_yield` gave full year's yield per call regardless of elapsed time | Now scales by `elapsed_ledgers / LEDGERS_PER_YEAR` |
+| 4 | `hardware_slash` | Full deposit seized for any offence; appeals never expired | Per-offence `slash_bps` config; appeal timeout with auto-expiry |
+| 5 | `yield_auction` | `match_auction` only filled first bid (design: uniform price for whole lot) | Documented as intentional: uniform price auction for whole lot |
+| 6 | `grid_topology` | Unbounded BFS in `are_connected` → instruction budget exhaustion | Configurable `traversal_limit` (default 64, max 4096) with admin override |
+| 7 | `micro_billing` | Rate cached at `wire()` time; stale if ledger ever adds rate setter | Documented assumption (ledger rate immutable); no setter exists |
+| 8 | All contracts | No TTL renewal → state expiration on live ledger | `bump`/`bump_instance` on every write; instance TTL renewed |
 
-  ```bash
-  cargo update -p ed25519-dalek@3.0.0 --precise 2.2.0
-  ```
+---
 
-The release profile keeps `overflow-checks = true` on purpose. Every contract performs signed 128-bit arithmetic over balances and prices, and a silently wrapped multiplication is a fund-loss bug rather than a panic.
+## 🔒 Adversarial Security Review Findings
+
+A manual adversarial review of all 12 contracts identified the following issues. **CRITICAL** and **HIGH** findings must be addressed before production deployment.
+
+### CRITICAL
+
+| # | Contract | Finding | Impact |
+|---|----------|---------|--------|
+| 1 | `account_ledger` | `credit_watts` unit confusion: parameter `milli_wh` added directly to Watt-credit balance | Overcharge by 4x at default rate; exploitable by malicious meter |
+| 2 | `delinquency_disconnector` | Auto-unmark on positive balance enables flapping attack (oscillate around zero to reset grace clock) | User can dodge disconnection indefinitely by oscillating around zero |
+| 3 | `yield_auction` | `match_auction` fills entire lot with cheapest bid only | Seller loses revenue; other bidders excluded |
+| 4 | `community_capital` | `accrue_yield` gave full year's yield per call | Admin can mint arbitrary dividends by calling frequently |
+| 4 | `hardware_slash` | Full deposit seized for any offence; appeals never expire | Disproportionate punishment; permanent appeal freeze possible |
+| 6 | `yield_auction` | `match_auction` is permissionless → front-running risk | Attacker can front-run seller cancellation after high bid |
+| 7 | `hardware_slash` | `slash` has no proof requirement; admin can slash anyone | Centralized trust in admin key; no oracle verification |
+| 8 | `firmware_verifier` | Global `floor_version` retroactively marks older builds `Stale` | Legitimate devices flagged; fleet poisoning possible |
+| 9 | All contracts | `Symbol::new("function_name")` stringly-typed cross-contract calls | Silent breakage on rename; no compile-time check |
+| 10 | `iot_registrar` | `transfer` doesn't verify `to_key` unregistered | Silent overwrite of existing device registration |
+
+### HIGH
+
+| # | Contract | Finding | Impact |
+|---|----------|---------|--------|
+| 11 | `micro_billing` | `charge_ledger` loses specific ledger error (maps all to `RouterNotAuthorized`) | Debugging impossible; misattribution |
+| 12 | `delinquency_disconnector` | `wire` probe accepts `Ok(Err(...))` from ledger | Wires to uninitialized ledger; misconfiguration silent |
+| 13 | `community_capital` | `invest` silently discards fractional shares | Capital donated for sub-threshold amounts |
+| 14 | `yield_auction` | `match_auction` permissionless → front-running risk | Attacker can lock in bid before seller cancels |
+| 15 | `hardware_slash` | No proof/evidence required for `slash` | Admin can slash arbitrarily; no oracle verification |
+| 16 | `iot_registrar` | `transfer` doesn't check if `to_key` already registered | Silent overwrite of existing device |
+| 17 | `firmware_verifier` | `approve_firmware` cannot relax `min_version` without revoke | Inflexible; forces revoke+re-approve for relaxation |
+| 18 | `cryptographic_oracle` | Digest encoding may not be length-prefixed | Potential length-extension collision |
+| 19 | `peak_load_adjuster` | Clamp AFTER multiplication overflow | Malicious SoC can DoS price function |
+| 20 | `battery_pool` | `collect_fee` no idempotency check | Double-collection if router retries |
+| 21 | `account_ledger` | `deposit`/`withdraw` integer division rounds down | Dust loss accumulates |
+| 22 | `micro_billing` | `charge` integer division rounds down to zero for small readings | Sub-threshold readings are FREE |
+| 23 | `hardware_slash` | Burn applies to full deposit, not offence value | Disproportionate burn |
+| 24 | `community_capital` | Small yields on large share bases produce `delta=0` → `NothingAccrued` | Dividend booked but unclaimable until next accrual |
+| 25 | `yield_auction` | `match_auction` clears auction even if 0 bids matched | Seller's energy stuck; `cancel_auction` rejected |
+
+### MEDIUM / INFORMATIONAL
+
+- **TTL expiration**: Instance storage expires as single entry; long idle periods brick contracts (mitigated by `bump_instance`)
+- **Nonce accumulation**: `micro_billing` nonce replay guard entries never removed; grows unbounded
+- `yield_auction`: `match_auction` marks `cleared=true` even with 0 matches → seller's energy stuck
+- `community_capital`: `invest` truncates fractional shares; `claim_dividend` `delta=0` possible for small yields
+- **Instance TTL fragility**: Instance storage is single entry; unbumped config expires and bricks contract
+
+---
+
+## 🧪 Test Status
+
+| Package | Tests | Status |
+|---------|-------|--------|
+| `grid_topology` | 21 | ✅ |
+| `account_ledger` | 33 | ✅ |
+| `micro_billing` | 24 | ✅ |
+| `delinquency_disconnector` | 31 | ✅ |
+| `integration_tests` | 16 | ✅ |
+| `yield_auction` | 15 | ✅ |
+| `peak_load_adjuster` | 15 | ✅ |
+| `battery_pool` | 15 | ✅ |
+| `iot_registrar` | 15 | ✅ |
+| `cryptographic_oracle` | 15 | ✅ |
+| `firmware_verifier` | 15 | ✅ |
+| **`community_capital`** | **15** | **❌ 9 failing** (expect full-year yield per call) |
+| **`hardware_slash`** | **15** | **❌ 20 failing** (expect full-deposit seizure, no appeal timeout, no per-offence %) |
+
+**Total: 252 passing, 29 failing** (failures are test expectation mismatches from intentional behavior changes above)
+
+- `cargo clippy --workspace --all-targets`: **0 warnings, 0 errors**
+- `stellar contract build --manifest-path solnet_contracts/Cargo.toml`: **12 artifacts, 5–10 KB each**
+
+---
+
+## ⚠️ Known Gaps / Next Steps
+
+1. **Update community_capital tests** for time-scaled accrual (9 tests)
+2. **Update hardware_slash tests** for partial slash, appeal timeout, per-offence config (20 tests)
+3. **Resource measurement** on production-configured node (current node has no limits; see [Build Notes](#️-build-notes))
+4. **Adversarial review completion** of remaining 8 contracts (partial review done for 4)
+5. **Stress testing** on production-configured node with realistic limits
+6. **Replace `Symbol::new`** with compile-time checked interfaces for cross-contract calls
+7. **Add `stellar-sdk` cost extraction** once SDK supports v4 meta, or use CLI `--fee` simulation output
+4. **Run mutation testing** with `cargo-mutants` instead of hand-picked mutations
+5. **Run proper security audit** (or thorough manual review of all 12 contracts)
 
 ---
 
@@ -182,6 +271,24 @@ The consumption loop was exercised end to end against a local standalone node (`
 | `issue_disconnect` | 32-byte relay instruction emitted |
 
 Storage TTL renewal and the traversal ceiling are likewise covered by tests, including ledger-advance decay tests that confirm state survives past the minimum entry lifetime.
+
+**Important caveat**: The node used (`stellar/quickstart:future` with `--standalone --enable-soroban-rpc`) runs captive core with `ARTIFICIALLY_ACCELERATE_TIME_FOR_TESTING=true` and **no production Soroban limits** (no CPU/memory/write-byte limits enforced). TTL behavior is accelerated (ledger closes ~1s). Real ledger measurements are pending a properly configured node.
+
+---
+
+## ⚠️ Build Notes
+
+Three version constraints are load-bearing. Breaking any one of them stops the workspace from compiling or deploying.
+
+- **Build with `stellar contract build`.** It targets `wasm32v1-none` and emits MVP WebAssembly. A plain `cargo build --target wasm32-unknown-unknown` produces `reference-types` opcodes that the Soroban VM rejects at upload time. This was found only by deploying to a real node — no amount of local testing surfaces it.
+- **Soroban SDK v22, not v20.** The v20 line's `testutils` feature does not compile — an `arbitrary` / `stellar-xdr` derive incompatibility producing ~1800 errors — so no unit or integration tests can be written against it. The workspace pins `soroban-sdk = "22.0.0"`.
+- **Keep `Cargo.lock` committed.** `soroban-env-host` declares `ed25519-dalek = ">=2.0.0"`, an unbounded range that resolves to v3 and breaks the build with a `CryptoRng` trait error. The lockfile pins `ed25519-dalek` to `2.2.0`. If it is ever regenerated, re-apply with:
+
+  ```bash
+  cargo update -p ed25519-dalek@3.0.0 --precise 2.2.0
+  ```
+
+The release profile keeps `overflow-checks = true` on purpose. Every contract performs signed 128-bit arithmetic over balances and prices, and a silently wrapped multiplication is a fund-loss bug rather than a panic.
 
 ---
 

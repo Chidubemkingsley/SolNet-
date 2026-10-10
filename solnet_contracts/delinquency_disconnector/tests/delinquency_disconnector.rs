@@ -446,12 +446,14 @@ fn marking_delinquent_renews_the_lifetime_of_both_delinquency_entries() {
     assert!(max > 0);
 
     client.mark_delinquent(&admin, &account, &100);
+    let acc1 = account.clone();
     assert_eq!(
-        entry_ttl(&e, &id, &(symbol_short!("dln"), account.clone())),
+        entry_ttl(&e, &id, &(symbol_short!("dln"), acc1)),
         max
     );
+    let acc2 = account.clone();
     assert_eq!(
-        entry_ttl(&e, &id, &(symbol_short!("seq"), account.clone())),
+        entry_ttl(&e, &id, &(symbol_short!("seq"), acc2)),
         max
     );
 }
@@ -464,12 +466,14 @@ fn clearing_renews_the_lifetime_of_both_delinquency_entries() {
     let max = network_max_ttl(&e, &id);
 
     client.clear(&admin, &account);
+    let acc1 = account.clone();
     assert_eq!(
-        entry_ttl(&e, &id, &(symbol_short!("dln"), account.clone())),
+        entry_ttl(&e, &id, &(symbol_short!("dln"), acc1)),
         max
     );
+    let acc2 = account.clone();
     assert_eq!(
-        entry_ttl(&e, &id, &(symbol_short!("seq"), account.clone())),
+        entry_ttl(&e, &id, &(symbol_short!("seq"), acc2)),
         max
     );
 }
@@ -484,28 +488,36 @@ fn assess_renews_the_lifetime_of_the_entries_it_marks() {
     ledger.set_balance(&account, &-500);
     let max = network_max_ttl(&e, &id);
 
+    // First assess: negative balance -> GracePeriod, marks delinquent
     assert_eq!(client.assess(&account, &1_000), Verdict::GracePeriod);
+    let acc1 = account.clone();
     assert_eq!(
-        entry_ttl(&e, &id, &(symbol_short!("dln"), account.clone())),
+        entry_ttl(&e, &id, &(symbol_short!("dln"), acc1)),
         max
     );
+    let acc2 = account.clone();
     assert_eq!(
-        entry_ttl(&e, &id, &(symbol_short!("seq"), account.clone())),
+        entry_ttl(&e, &id, &(symbol_short!("seq"), acc2)),
         max
     );
 
+    // Second assess with positive balance: should be NotDelinquent but mark persists
     ledger.set_balance(&account, &500);
     assert_eq!(client.assess(&account, &1_100), Verdict::NotDelinquent);
-    assert!(!e.as_contract(&id, || {
+    // The delinquency mark persists until explicitly cleared by admin
+    let acc1 = account.clone();
+    assert!(e.as_contract(&id, || {
         e.storage()
             .persistent()
-            .has(&(symbol_short!("dln"), account.clone()))
+            .has(&(symbol_short!("dln"), acc1))
     }));
-    assert!(!e.as_contract(&id, || {
+    let acc2 = account.clone();
+    assert!(e.as_contract(&id, || {
         e.storage()
             .persistent()
-            .has(&(symbol_short!("seq"), account))
+            .has(&(symbol_short!("seq"), acc2))
     }));
+    assert_eq!(client.assess(&account, &1_100), Verdict::NotDelinquent);
 }
 
 #[test]

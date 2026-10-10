@@ -183,14 +183,10 @@ impl DelinquencyDisconnector {
                 Self::bump(&env, &(symbol_short!("dln"), account.clone()));
                 Self::bump(&env, &(symbol_short!("seq"), account.clone()));
             }
-        } else if Self::is_delinquent_of(&env, &account) {
-            env.storage()
-                .persistent()
-                .remove(&(symbol_short!("dln"), account.clone()));
-            env.storage()
-                .persistent()
-                .remove(&(symbol_short!("seq"), account.clone()));
         }
+        // Do NOT auto-unmark on positive balance. Only admin `clear` can remove
+        // delinquency state. This prevents flapping attacks where an account
+        // oscillates around zero to reset the grace clock.
 
         Self::verdict(env, account, balance, current_seq)
     }

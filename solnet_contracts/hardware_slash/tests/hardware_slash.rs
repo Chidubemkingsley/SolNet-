@@ -15,7 +15,7 @@ fn setup(burn_bps: i128) -> (Env, Address, Address, HardwareSlashClient<'static>
     let operator = Address::generate(&e);
     let id = e.register(HardwareSlash, ());
     let client = HardwareSlashClient::new(&e, &id);
-    client.init(&admin, &burn_bps);
+    client.init(&admin, &burn_bps, &5000, &5000, &100);
     (e, admin, operator, client)
 }
 
@@ -30,7 +30,7 @@ fn setup_tracked(
     let operator = Address::generate(&e);
     let id = e.register(HardwareSlash, ());
     let client = HardwareSlashClient::new(&e, &id);
-    client.init(&admin, &burn_bps);
+    client.init(&admin, &burn_bps, &5000, &5000, &100);
     (e, admin, operator, id, client)
 }
 
@@ -95,20 +95,20 @@ fn init_stores_burn_bps_and_empty_ledgers() {
     assert_eq!(client.compensation_pool(), 0);
     assert_eq!(client.total_burned(), 0);
     assert_eq!(client.total_slashed(), 0);
-    assert_eq!(client.try_init(&admin, &2_500), Err(Ok(Error::AlreadyInitialized)));
+    assert_eq!(client.try_init(&admin, &2_500, &5000, &5000, &100), Err(Ok(Error::AlreadyInitialized)));
 }
 
 #[test]
 fn init_rejects_burn_bps_outside_the_valid_range() {
     let (e, admin, _op, _client) = setup(1_000);
     let high = HardwareSlashClient::new(&e, &e.register(HardwareSlash, ()));
-    assert_eq!(high.try_init(&admin, &10_001), Err(Ok(Error::InvalidBurnBps)));
+    assert_eq!(high.try_init(&admin, &10_001, &5000, &5000, &100), Err(Ok(Error::InvalidBurnBps)));
 
     let low = HardwareSlashClient::new(&e, &e.register(HardwareSlash, ()));
-    assert_eq!(low.try_init(&admin, &-1), Err(Ok(Error::InvalidBurnBps)));
+    assert_eq!(low.try_init(&admin, &-1, &5000, &5000, &100), Err(Ok(Error::InvalidBurnBps)));
 
     let edge = HardwareSlashClient::new(&e, &e.register(HardwareSlash, ()));
-    edge.init(&admin, &10_000);
+    edge.init(&admin, &10_000, &5000, &5000, &100);
     assert_eq!(edge.burn_bps(), 10_000);
 }
 

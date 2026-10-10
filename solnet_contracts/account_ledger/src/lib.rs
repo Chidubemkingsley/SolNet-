@@ -136,21 +136,22 @@ impl AccountLedger {
     /// account. The delta is signed: negative values burn previously minted
     /// Watt-credits and are permitted to drive the Watt balance below zero so
     /// that accrued supply debt is visible to the delinquency disconnector.
-    /// Returns the resulting Watt-credit balance.
+    /// The delta is in Watt-credits (already converted from milli-watt-hours
+    /// at the ledger's configured rate). Returns the resulting Watt-credit balance.
     pub fn credit_watts(
         env: Env,
         admin: Address,
         account: Address,
-        milli_wh: i128,
+        watts_delta: i128,
     ) -> Result<i128, Error> {
         Self::require_admin_auth(&env, &admin)?;
         Self::require_configured(&env)?;
-        if milli_wh == 0 {
+        if watts_delta == 0 {
             return Err(Error::InvalidAmount);
         }
 
         let next = Self::watt_balance_of(&env, &account)
-            .checked_add(milli_wh)
+            .checked_add(watts_delta)
             .ok_or(Error::ArithmeticOverflow)?;
         env.storage()
             .persistent()

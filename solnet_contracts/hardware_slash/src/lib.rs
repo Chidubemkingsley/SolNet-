@@ -13,6 +13,7 @@
 
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, IntoVal, Val,
+    Vec,
 };
 
 #[contracterror]
@@ -27,6 +28,8 @@ pub enum Error {
     AlreadySlashed = 6,
     UnderAppeal = 7,
     NoAppeal = 8,
+    InvalidSlashBps = 9,
+    AppealTimeout = 10,
 }
 
 /// Class of hardware misbehaviour proven against a meter operator.
@@ -61,7 +64,14 @@ impl HardwareSlash {
     /// Initializes the hardware slash contract state configuration. `burn_bps`
     /// is the share of every seizure, in basis points, that is permanently
     /// destroyed; the remainder is redistributed to the compensation pool.
-    pub fn init(env: Env, admin: Address, burn_bps: i128) -> Result<(), Error> {
+    pub fn init(
+        env: Env,
+        admin: Address,
+        burn_bps: i128,
+        slash_bps_gen: i128,
+        slash_bps_bypass: i128,
+        appeal_timeout_ledgers: u64,
+    ) -> Result<(), Error> {
         if env.storage().instance().has(&symbol_short!("admin")) {
             return Err(Error::AlreadyInitialized);
         }
@@ -69,8 +79,15 @@ impl HardwareSlash {
         if !(0..=10_000).contains(&burn_bps) {
             return Err(Error::InvalidBurnBps);
         }
+        if !(0..=10_000).contains(&slash_bps_gen) || !(0..=10_000).contains(&slash_bps_bypass) {
+            return Err(Error::InvalidSlashBps);
+        }
+        admin.require_auth();
         env.storage().instance().set(&symbol_short!("admin"), &admin);
         env.storage().instance().set(&symbol_short!("bbps"), &burn_bps);
+        env.storage().instance().set(&symbol_short!("sgps"), &slash_bps_gen);
+        env.storage().instance().set(&symbol_short!("sbps"), &slash_bps_bypass);
+        env.storage().instance().set(&symbol_short!("apot"), &appeal_timeout_ledgers);
         env.storage().instance().set(&symbol_short!("pool"), &0i128);
         env.storage().instance().set(&symbol_short!("burn"), &0i128);
         env.storage().instance().set(&symbol_short!("slz"), &0i128);
@@ -102,7 +119,8 @@ impl HardwareSlash {
         Ok(())
     }
 
-    /// Seizes the operator's entire collateral deposit for a proven offence.
+    /// Seizes a portion of the operator's collateral deposit for a proven offence.
+    /// The seized portion is determined by the offence-specific slash percentage.
     /// Double slashing the same offence is impossible even if the operator has
     /// posted fresh collateral since the first seizure.
     pub fn slash(
@@ -118,9 +136,16 @@ impl HardwareSlash {
         if Self::slashed(&env, &owner, offence) {
             return Err(Error::AlreadySlashed);
         }
-        let seized = Self::collateral(&env, &owner);
-        if seized <= 0 {
+        let collateral = Self::collateral(&env, &owner);
+        if collateral <= 0 {
             return Err(Error::NoCollateral);
+        }
+
+        // Get offence-specific slash percentage
+        let slash_bps = Self::slash_bps_of(&env, offence);
+        let seized = collateral * slash_bps / 10_000;
+        if seized <= 0 {
+            return Err(Error::InvalidSlashBps);
         }
 
         let burn_bps: i128 = env
@@ -133,7 +158,7 @@ impl HardwareSlash {
 
         env.storage()
             .persistent()
-            .set(&(symbol_short!("col"), owner.clone()), &0i128);
+            .set(&(symbol_short!("col"), owner.clone()), &(collateral - seized));
         env.storage()
             .persistent()
             .set(
@@ -178,6 +203,24 @@ impl HardwareSlash {
             redistributed,
             offence,
         })
+    }
+
+    /// Returns the slash percentage (in basis points) for a given offence type.
+    fn slash_bps_of(env: &Env, offence: Offence) -> i128 {
+        match offence {
+            Offence::SpoofedGeneration => {
+                env.storage()
+                    .instance()
+                    .get(&symbol_short!("sgps"))
+                    .unwrap_or(0)
+            }
+            Offence::RouterBypass => {
+                env.storage()
+                    .instance()
+                    .get(&symbol_short!("sbps"))
+                    .unwrap_or(0)
+            }
+        }
     }
 
     /// Freezes an offence while the operator's challenge is being adjudicated.

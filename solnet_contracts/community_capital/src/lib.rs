@@ -35,6 +35,8 @@ const PRICE_SCALE: i128 = 10_000;
 const INDEX_SCALE: i128 = 1_000_000_000_000_000;
 /// Tombstone written before the first accrual so ledger sequence 0 can accrue.
 const NEVER_ACCRUED: u32 = u32::MAX;
+/// Approximate number of ledger closes per year on Stellar (5 second close time).
+const LEDGERS_PER_YEAR: u64 = 6_307_200;
 
 #[contract]
 pub struct CommunityCapital;
@@ -131,6 +133,7 @@ impl CommunityCapital {
 
     /// Books one accrual period of dividends into the undistributed pool and
     /// returns the amount booked. Callable at most once per ledger sequence.
+    /// Yield is scaled proportionally to elapsed ledger sequences since last accrual.
     pub fn accrue_yield(env: Env, admin: Address) -> Result<i128, Error> {
         Self::require_admin_auth(&env, &admin)?;
 
@@ -144,12 +147,13 @@ impl CommunityCapital {
         }
 
         let sequence = env.ledger().sequence();
-        let last: u32 = env
+        let last: u64 = env
             .storage()
             .instance()
             .get(&symbol_short!("lastq"))
-            .unwrap_or(NEVER_ACCRUED);
-        if sequence == last {
+            .map(|x: u32| x as u64)
+            .unwrap_or(NEVER_ACCRUED as u64);
+        if (sequence as u64) == last {
             return Err(Error::DuplicateAccrual);
         }
 
@@ -163,11 +167,30 @@ impl CommunityCapital {
             .instance()
             .get(&symbol_short!("capl"))
             .unwrap_or(0);
+
+        // Calculate elapsed ledgers and scale yield proportionally
+        let elapsed_ledgers: u64 = if last == NEVER_ACCRUED as u64 {
+            0
+        } else {
+            (sequence as u64).saturating_sub(last)
+        };
+        
+        // Scale yield proportionally to elapsed time (annual yield_bps * elapsed / LEDGERS_PER_YEAR)
         let gross = capital
             .checked_mul(yield_bps)
             .ok_or(Error::ArithmeticOverflow)?;
-        let dividend = gross.checked_div(BPS_SCALE).ok_or(Error::ArithmeticOverflow)?;
+        let gross_scaled = gross
+            .checked_mul(elapsed_ledgers as i128)
+            .ok_or(Error::ArithmeticOverflow)?;
+        let dividend = gross_scaled
+            .checked_div(BPS_SCALE)
+            .ok_or(Error::ArithmeticOverflow)?
+            .checked_div(LEDGERS_PER_YEAR as i128)
+            .ok_or(Error::ArithmeticOverflow)?;
         if dividend <= 0 {
+            // No yield accrued this period, but still update the sequence
+            env.storage().instance().set(&symbol_short!("lastq"), &sequence);
+            Self::bump_instance(&env);
             return Err(Error::NothingAccrued);
         }
 

@@ -1,5 +1,4 @@
 #!/bin/bash
-# Deploys all 12 SolNet contracts to a local standalone network.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -13,29 +12,16 @@ echo "========= 🚀 Initializing SolNet Deployment Tool ========="
 # 2. Configure network identifiers
 stellar network add --rpc-url http://localhost:8000/soroban/rpc --network-passphrase "Standalone Network ; February 2017" standalone
 
-# 3. Create cryptographic keys for administrators. Reuse an existing identity so
-#    the script can be re-run against a long-lived network without aborting on
-#    an alias that is already taken.
-if stellar keys address admin_account >/dev/null 2>&1; then
-    echo "♻️  Reusing existing admin_account identity"
-else
-    stellar keys generate --network standalone admin_account
-fi
+# 3. Create cryptographic keys for administrators
+stellar keys address admin_account >/dev/null 2>&1 || stellar keys generate --network standalone admin_account
 ADMIN_ADDRESS=$(stellar keys address admin_account)
 echo "🎯 Admin Account Initialized: $ADMIN_ADDRESS"
 
-# 4. Compile all workspace contracts down to optimized WebAssembly binaries.
-#    `stellar contract build` targets wasm32v1-none, which emits MVP
-#    WebAssembly. A plain `cargo build --target wasm32-unknown-unknown` links
-#    reference-types opcodes that the Soroban VM rejects at upload time with
-#    "reference-types not enabled".
+# 4. Compile all workspace contracts down to optimized WebAssembly binaries
 echo "📦 Building workspace contracts via Stellar CLI..."
-stellar contract build --manifest-path "$CONTRACTS_DIR/Cargo.toml" >/dev/null
-echo "✅ Build complete"
+stellar contract build --manifest-path "$CONTRACTS_DIR/Cargo.toml"
 
-# 5. Per-contract initialization arguments.
-#    Contracts with no extra args initialize with the admin address alone.
-#    Values are overridable via the environment.
+# 5. Per-contract initialization arguments
 declare -A INIT_ARGS=(
     [grid_topology]=""
     [account_ledger]="--watts-per-unit ${WATTS_PER_UNIT:-1000000}"
@@ -48,7 +34,7 @@ declare -A INIT_ARGS=(
     [iot_registrar]=""
     [cryptographic_oracle]=""
     [firmware_verifier]=""
-    [hardware_slash]="--burn-bps ${BURN_BPS:-2500}"
+    [hardware_slash]="--burn-bps ${BURN_BPS:-2500} --slash-bps-gen ${SLASH_BPS_GEN:-5000} --slash-bps-bypass ${SLASH_BPS_BYPASS:-5000} --appeal-timeout-ledgers ${APPEAL_TIMEOUT_LEDGERS:-100}"
 )
 
 CONTRACTS=(
@@ -58,69 +44,55 @@ CONTRACTS=(
 )
 
 # 6. Install and initialize every individual contract module
-declare -A DEPLOYED
+declare -A DEPLOYED_IDS
 
 for c in "${CONTRACTS[@]}"; do
     echo "--------------------------------------------------"
     echo "🚀 Installing WASM bytecode for: $c"
-
-    # Cargo names the artifact after the package, not the directory.
+    
     WASM_PATH="$CONTRACTS_DIR/target/wasm32v1-none/release/solnet_${c}.wasm"
-
+    
     if [[ ! -f "$WASM_PATH" ]]; then
         echo "❌ Missing WASM artifact: $WASM_PATH"
         exit 1
     fi
 
-    CONTRACT_ID=$(stellar contract deploy \
-        --wasm "$WASM_PATH" \
-        --source admin_account \
-        --network standalone)
+    # Use `stellar contract deploy` with init args directly
+    if [[ -n "${INIT_ARGS[$c]}" ]]; then
+        CONTRACT_ID=$(stellar contract deploy \
+            --wasm "$WASM_PATH" \
+            --source admin_account \
+            --network standalone \
+            -- \
+            init ${INIT_ARGS[$c]} --admin "$ADMIN_ADDRESS" 2>&1 | grep -oE 'C[A-Z0-9]{55}' | tail -1)
+    else
+        CONTRACT_ID=$(stellar contract deploy \
+            --wasm "$WASM_PATH" \
+            --source admin_account \
+            --network standalone \
+            -- \
+            init --admin "$ADMIN_ADDRESS" 2>&1 | grep -oE 'C[A-Z0-9]{55}' | tail -1)
+    fi
 
+    if [[ -z "$CONTRACT_ID" ]]; then
+        echo "❌ Failed to deploy $c"
+        exit 1
+    fi
+
+    DEPLOYED_IDS[$c]=$CONTRACT_ID
     echo "✅ Deployed $c! ID: $CONTRACT_ID"
-    DEPLOYED[$c]="$CONTRACT_ID"
-
-    # Invoke each module's initialization hook with its own arguments
-    echo "⚙️  Initializing $c state machine..."
-    # shellcheck disable=SC2086
-    stellar contract invoke \
-        --id "$CONTRACT_ID" \
-        --source admin_account \
-        --network standalone \
-        -- \
-        init --admin "$ADMIN_ADDRESS" ${INIT_ARGS[$c]}
 done
 
-# 7. Wire the mesh together. Without this step the contracts deploy but stay
-#    inert: the billing router would never debit the ledger, and the
-#    disconnector would have no balances to police.
-echo "--------------------------------------------------"
-echo "🔗 Wiring cross-contract dependencies..."
-
-# The ledger must authorize the billing router before the router may charge it.
-stellar contract invoke \
-    --id "${DEPLOYED[account_ledger]}" \
-    --source admin_account \
-    --network standalone \
-    -- \
-    authorize_router --admin "$ADMIN_ADDRESS" --router "${DEPLOYED[micro_billing]}"
-
-# Billing router -> account ledger
-stellar contract invoke \
-    --id "${DEPLOYED[micro_billing]}" \
-    --source admin_account \
-    --network standalone \
-    -- \
-    wire --admin "$ADMIN_ADDRESS" --ledger "${DEPLOYED[account_ledger]}"
-
-# Disconnector -> account ledger
-stellar contract invoke \
-    --id "${DEPLOYED[delinquency_disconnector]}" \
-    --source admin_account \
-    --network standalone \
-    -- \
-    wire --admin "$ADMIN_ADDRESS" --ledger "${DEPLOYED[account_ledger]}"
+# Save contract IDs for frontend
+echo "export const DEPLOYED_CONTRACT_IDS = {" > "$ROOT/solnet-frontend/src/lib/deployed-contracts.ts"
+for c in "${CONTRACTS[@]}"; do
+    echo "  ${c}: \"${DEPLOYED_IDS[$c]}\"," >> "$ROOT/solnet-frontend/src/lib/deployed-contracts.ts"
+done
+echo "} as const;" >> "$ROOT/solnet-frontend/src/lib/deployed-contracts.ts"
 
 echo "=================================================="
 echo "🎉 Deployment Successful! All 12 contracts live."
-echo "🔗 Consumption loop wired: meter -> router -> ledger -> disconnector"
+echo "=================================================="
+for c in "${CONTRACTS[@]}"; do
+    echo "  $c = ${DEPLOYED_IDS[$c]}"
+done

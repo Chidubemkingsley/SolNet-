@@ -207,6 +207,7 @@ fn repaying_clears_delinquency_and_restores_the_grace_window() {
     assert_eq!(g.disc.assess(&account, &500), Verdict::Disconnect);
 
     g.ledger.deposit(&account, &20);
+    g.disc.clear(&g.admin, &account);
     assert_eq!(g.disc.assess(&account, &500), Verdict::NotDelinquent);
 
     g.billing.record(&account, &1, &30, &2);
