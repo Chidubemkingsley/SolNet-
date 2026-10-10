@@ -6,11 +6,11 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import NotFound from '@/pages/not-found';
 import { Route, Switch, useLocation, Router as WouterRouter, Link } from 'wouter';
 import {
-  Activity, ArrowDownToLine, BatteryCharging, Blocks, BookOpenCheck, Box, Cable,
+  Activity, ArrowDownToLine, ArrowRight, ArrowUpRight, BatteryCharging, Blocks, BookOpenCheck, Box, Cable,
   ChevronRight, CircleDollarSign, Cpu, Database, FileClock, FileText, Gauge,
-  HardDrive, Landmark, Menu, Network, Radio, RefreshCw, ShieldAlert, SlidersHorizontal,
-  Sparkles, Vote, Wallet, X, Zap, Settings, Settings as SettingsIcon, Wrench, ChartNoAxesCombined,
-  Globe, Leaf, Lightning, Shield, Users, BarChart, Zap as ZapIcon,
+  HardDrive, Landmark, Menu, Network, PanelsTopLeft, Radio, RefreshCw, Shield, ShieldAlert, ShieldCheck, SlidersHorizontal,
+  Sparkles, Sun, Vote, Wallet, X, Zap, Settings, Settings as SettingsIcon, Wrench, ChartNoAxesCombined,
+  Globe, Leaf, Lightning, Users, BarChart, Zap as ZapIcon,
   Github, ExternalLink,
 } from 'lucide-react';
 import {
@@ -25,175 +25,131 @@ import { loadSettings, saveSettings, type SolNetSettings } from '@/lib/config';
 const client = new QueryClient();
 
 function LandingPage() {
-  const { network, settings, wallet } = useAppState();
-  
-  return (
-    <div className="landing-page">
-      <header className="landing-header">
-        <nav className="landing-nav">
-          <div className="landing-brand">
-            <span className="brand-mark"><Cable size={24} strokeWidth={2.5} /></span>
-            <span className="brand-name">SolNet</span>
-            <span className="brand-tagline">Autonomous DePIN Microgrid Protocol</span>
-          </div>
-          <div className="landing-nav-actions">
-            <span className="network-badge" style={{background: network ? '#3a9875' : '#bd8b45'}}>
-              {network ? `Live · Ledger ${network.latestLedger} · ${network.latencyMs}ms` : 'Network Offline'}
-            </span>
-            <Link href="/dashboard" className="button">Open Console</Link>
-          </div>
-        </nav>
-      </header>
+  const { settings, network, networkError } = useAppState();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const configuredContracts = Object.values(settings.contracts).filter(Boolean).length;
+  const networkLabel = settings.network === 'mainnet' ? 'Stellar Mainnet' : settings.network === 'standalone' ? 'Standalone RPC' : 'Stellar Testnet';
+  const statusLabel = network ? `Connected to ${networkLabel}` : networkError ? 'RPC check unavailable' : `Checking ${networkLabel}`;
 
-      <main className="landing-main">
-        <section className="hero">
-          <div className="hero-content">
-            <span className="hero-badge">
-              <Shield className="badge-icon" />
-              Autonomous DePIN Microgrid Protocol
-            </span>
-            <h1>Autonomous Energy Grids<br/>Powered by Stellar Soroban</h1>
-            <p className="hero-subtitle">
-              Autonomous, localized peer-to-peer energy routing with real-time micro-billing 
-              and hardware-enforced access control for community solar grids. 
-              Operates seamlessly even during internet blackouts.
-            </p>
-            <div className="hero-actions">
-              <Link href="/dashboard" className="button primary">
-                <Wallet size={18} /> Launch Console
-              </Link>
-              <Link href="/settings" className="button secondary">
-                <Settings size={18} /> Configure Network
-              </Link>
-            </div>
-            <div className="hero-stats">
-              <div className="stat">
-                <span className="stat-value">12</span>
-                <span className="stat-label">Smart Contracts</span>
-              </div>
-              <div className="stat">
-                <span className="stat-value">252</span>
-                <span className="stat-label">Tests Passing</span>
-              </div>
-              <div className="stat">
-                <span className="stat-value">12</span>
-                <span className="stat-label">WASM Artifacts</span>
-              </div>
-              <div className="stat">
-                <span className="stat-value">301</span>
-                <span className="stat-label">Total Tests</span>
-              </div>
-            </div>
-          </div>
-          <div className="hero-visual">
-            <div className="network-viz">
-              <div className="node central" />
-              <div className="node-ring">
-                {[...Array(8)].map((_, i) => (
-                  <div key={i} className="node peripheral" style={{ 
-                    transform: `rotate(${i * 45}deg) translateX(120px) rotate(-${i * 45}deg)` 
-                  }} />
-                ))}
-              </div>
-              <div className="pulse-ring" />
-              <div className="pulse-ring" style={{animationDelay: '1s'}} />
-              <div className="pulse-ring" style={{animationDelay: '2s'}} />
-            </div>
-          </div>
-        </section>
+  return <main className="landing-page">
+    <header className="landing-nav">
+      <Link href="/" className="landing-brand" aria-label="SolNet home" data-testid="link-landing-brand">
+        <span className="landing-mark"><Cable size={19} strokeWidth={2.1} /></span>
+        <span>solnet<span className="brand-period">.</span></span>
+      </Link>
+      <button className="landing-menu-toggle" aria-label={menuOpen ? 'Close menu' : 'Open menu'} aria-expanded={menuOpen} onClick={() => setMenuOpen(!menuOpen)} data-testid="button-landing-menu">
+        {menuOpen ? <X size={20} /> : <Menu size={20} />}
+      </button>
+      <nav className={`landing-nav-links ${menuOpen ? 'is-open' : ''}`} aria-label="Main navigation">
+        <a href="#platform" onClick={() => setMenuOpen(false)} data-testid="link-landing-platform">Platform</a>
+        <a href="#how-it-works" onClick={() => setMenuOpen(false)} data-testid="link-landing-how-it-works">How it works</a>
+        <a href="#transparency" onClick={() => setMenuOpen(false)} data-testid="link-landing-transparency">Transparency</a>
+        <Link href="/dashboard" className="landing-nav-cta" onClick={() => setMenuOpen(false)} data-testid="link-landing-console">Open console <ArrowUpRight size={15} /></Link>
+      </nav>
+    </header>
 
-        <section className="features">
-          <h2 className="section-title">How It Works</h2>
-          <div className="features-grid">
-            {[
-              { icon: Blocks, title: "12 Smart Contracts", desc: "Modular, upgradeable Soroban contracts governing every aspect of the microgrid", category: "Protocol" },
-              { icon: Cable, title: "Grid Topology", desc: "Physical node registry with BFS reachability and traversal limits", category: "Foundation" },
-              { icon: Wallet, title: "Account Ledger", desc: "Stablecoin deposits → Watt-credit conversion with 1e6 fixed-point precision", category: "Settlement" },
-              { icon: Activity, title: "Micro Billing", desc: "High-frequency meter readings with nonce replay protection", category: "Settlement" },
-              { icon: ShieldAlert, title: "Auto Disconnection", desc: "Grace-period enforcement with signed relay instructions", category: "Settlement" },
-              { icon: ZapIcon, title: "Yield Auction", desc: "Double-sided matching engine for prosumer energy trading", category: "Markets" },
-              { icon: BatteryCharging, title: "Battery Pool", desc: "Fee reserves earmarked for hardware maintenance", category: "Markets" },
-              { icon: Sparkles, title: "Community Capital", desc: "Crowdfunding with pro-rata dividend index", category: "Markets" },
-              { icon: Cpu, title: "IoT Registrar", desc: "Factory-fused device keys with versioned registrations", category: "Security" },
-              { icon: Radio, title: "Crypto Oracle", desc: "Offline telemetry batch verification with replay protection", category: "Security" },
-              { icon: HardDrive, title: "Firmware Verifier", desc: "Hash-based attestation with floor-version staleness", category: "Security" },
-              { icon: Shield, title: "Hardware Slash", desc: "Collateral seizure with burn/redistribution split", category: "Security" },
-            ].map((feature, i) => (
-              <article key={feature.title} className="feature-card" style={{animationDelay: `${i * 50}ms`}}>
-                <div className="feature-icon"><feature.icon size={24} /></div>
-                <span className="feature-category">{feature.category}</span>
-                <h3>{feature.title}</h3>
-                <p>{feature.desc}</p>
-              </article>
-            ))}
-          </div>
-        </section>
-
-        <section className="contracts-section">
-          <h2 className="section-title">Live Contracts</h2>
-          <p className="section-subtitle">All contracts deployed and verified on Stellar standalone network</p>
-          <div className="contracts-grid">
-            {[
-              { key: 'grid_topology', label: 'Grid Topology', category: 'Foundation', icon: Network },
-              { key: 'account_ledger', label: 'Account Ledger', category: 'Settlement', icon: Wallet },
-              { key: 'micro_billing', label: 'Micro Billing', category: 'Settlement', icon: Activity },
-              { key: 'delinquency_disconnector', label: 'Disconnector', category: 'Settlement', icon: ShieldAlert },
-              { key: 'yield_auction', label: 'Yield Auction', category: 'Markets', icon: ZapIcon },
-              { key: 'peak_load_adjuster', label: 'Peak Load Adjuster', category: 'Markets', icon: Gauge },
-              { key: 'battery_pool', label: 'Battery Pool', category: 'Markets', icon: BatteryCharging },
-              { key: 'community_capital', label: 'Community Capital', category: 'Markets', icon: Sparkles },
-              { key: 'iot_registrar', label: 'IoT Registrar', category: 'Security', icon: Cpu },
-              { key: 'cryptographic_oracle', label: 'Crypto Oracle', category: 'Security', icon: Radio },
-              { key: 'firmware_verifier', label: 'Firmware Verifier', category: 'Security', icon: HardDrive },
-              { key: 'hardware_slash', label: 'Hardware Slash', category: 'Security', icon: Shield },
-            ].map(contract => (
-              <article key={contract.key} className="contract-card">
-                <div className="contract-icon"><contract.icon size={20} /></div>
-                <h4>{contract.label}</h4>
-                <span className="contract-category">{contract.category}</span>
-              </article>
-            ))}
-          </div>
-        </section>
-
-        <section className="cta-section">
-          <div className="cta-content">
-            <h2>Ready to Build?</h2>
-            <p>Connect your wallet, configure the network, and start interacting with live Soroban contracts.</p>
-            <div className="cta-actions">
-              <Link href="/dashboard" className="button primary large">
-                <Wallet size={20} /> Launch Console
-              </Link>
-              <Link href="/settings" className="button secondary large">
-                <Settings size={20} /> Configure Network
-              </Link>
-            </div>
-          </div>
-        </section>
-      </main>
-
-      <footer className="landing-footer">
-        <div className="footer-grid">
-          <div className="footer-brand">
-            <span className="footer-brand-mark"><Cable size={20} strokeWidth={2.5} /></span>
-            <span className="footer-brand-name">SolNet</span>
-          </div>
-          <div className="footer-links">
-            <a href="https://github.com/Chidubemkingsley/SolNet-" target="_blank" rel="noopener noreferrer">
-              <Github size={18} /> GitHub
-            </a>
-            <a href="https://developers.stellar.org/docs/smart-contracts" target="_blank" rel="noopener noreferrer">
-              <ExternalLink size={18} /> Stellar Docs
-            </a>
-            <a href="https://soroban.stellar.org" target="_blank" rel="noopener noreferrer">
-              <Globe size={18} /> Soroban
-            </a>
-          </div>
-          <p className="footer-copyright">Built on Stellar Soroban · Autonomous DePIN Microgrid Protocol</p>
+    <section className="landing-hero">
+      <div className="hero-copy">
+        <div className="hero-kicker"><span className="kicker-line" /> COMMUNITY ENERGY, IN THE OPEN</div>
+        <h1>Power that<br />belongs <em>here.</em></h1>
+        <p className="hero-lede">A clear-eyed control console for community microgrids — bringing local meters, solar and storage, payments, and cooperative decisions into one place.</p>
+        <div className="hero-actions">
+          <Link href="/dashboard" className="hero-primary" data-testid="link-hero-dashboard">Explore the console <ArrowRight size={17} /></Link>
+          <a href="#platform" className="hero-secondary" data-testid="link-hero-platform">See what it brings together <span>↓</span></a>
         </div>
-      </footer>
-  </div>
-  );
+        <div className="hero-footnote"><ShieldCheck size={15} /> Built to show what the network actually returns.</div>
+      </div>
+      <div className="hero-art" aria-label="Illustration of a connected neighborhood microgrid" role="img" data-testid="visual-microgrid-illustration">
+        <div className="art-orbit orbit-one" /><div className="art-orbit orbit-two" />
+        <div className="sun-disc"><Sun size={39} strokeWidth={1.2} /></div>
+        <div className="art-caption">LOCAL GENERATION <span>↗</span></div>
+        <svg className="grid-lines" viewBox="0 0 620 500" fill="none" aria-hidden="true">
+          <path d="M85 362L227 264L366 335L503 217M227 264L260 139L386 182L503 217M366 335L386 182" />
+          <path className="line-dash" d="M85 362L227 264L366 335L503 217M227 264L260 139L386 182L503 217M366 335L386 182" />
+        </svg>
+        <div className="node node-home"><span className="node-glyph"><PanelsTopLeft size={19} /></span><b>Homes</b><small>metered locally</small></div>
+        <div className="node node-solar"><span className="node-glyph"><Sun size={19} /></span><b>Solar</b><small>generation</small></div>
+        <div className="node node-storage"><span className="node-glyph"><BatteryCharging size={19} /></span><b>Storage</b><small>shared reserve</small></div>
+        <div className="node node-coop"><span className="node-glyph"><Landmark size={19} /></span><b>Co-op</b><small>community ledger</small></div>
+        <div className="flow-dot flow-one" /><div className="flow-dot flow-two" /><div className="flow-dot flow-three" />
+        <div className="art-tag"><span className={`live-indicator ${network ? 'online' : ''}`} />{statusLabel}</div>
+        <div className="art-bottom-note">A shared system.<br /><strong>One view of the whole.</strong></div>
+      </div>
+      <div className="hero-index"><span>01</span><span className="index-rule" /><span>ENERGY, LOCALLY GOVERNED</span></div>
+    </section>
+
+    <section className="landing-ribbon" aria-label="SolNet platform areas">
+      <span>FIELD SYSTEMS</span><i /><span>COMMUNITY LEDGER</span><i /><span>COOPERATIVE GOVERNANCE</span><i /><span>STELLAR / SOROBAN</span>
+    </section>
+
+    <section className="landing-platform section-wrap" id="platform">
+      <div className="section-intro">
+        <div className="section-label">01 / THE CONTROL ROOM</div>
+        <h2>Local energy has<br />a lot of moving parts.</h2>
+        <p>SolNet gives operators and cooperative members one practical place to inspect the pieces — without pretending the hard parts are already solved.</p>
+      </div>
+      <div className="platform-list">
+        <article className="platform-row">
+          <span className="platform-number">A</span><span className="platform-icon"><Activity size={21} /></span>
+          <div><h3>See the field</h3><p>Bring meter reads, device identities, firmware checks, and incident evidence into a shared operator workflow.</p></div>
+          <Link href="/meters" className="row-link" aria-label="Explore meters and billing" data-testid="link-platform-meters"><ArrowUpRight size={17} /></Link>
+        </article>
+        <article className="platform-row">
+          <span className="platform-number">B</span><span className="platform-icon"><Zap size={21} /></span>
+          <div><h3>Coordinate energy</h3><p>Inspect topology, tariffs, storage reserves, and market interfaces as the configured network reports them.</p></div>
+          <Link href="/topology" className="row-link" aria-label="Explore network operations" data-testid="link-platform-operations"><ArrowUpRight size={17} /></Link>
+        </article>
+        <article className="platform-row">
+          <span className="platform-number">C</span><span className="platform-icon"><Landmark size={21} /></span>
+          <div><h3>Keep ownership visible</h3><p>Connect energy credit flows with community capital, proposals, voting, and raw event review.</p></div>
+          <Link href="/governance" className="row-link" aria-label="Explore governance" data-testid="link-platform-governance"><ArrowUpRight size={17} /></Link>
+        </article>
+      </div>
+    </section>
+
+    <section className="landing-principle" id="how-it-works">
+      <div className="principle-aside"><span className="section-label">02 / HOW IT WORKS</span><span className="principle-stamp">NO BLACK BOX<br />BETWEEN THE<br />COMMUNITY & GRID</span></div>
+      <div className="principle-main">
+        <h2>Infrastructure<br />should be <em>legible.</em></h2>
+        <p>SolNet pairs field-facing workflows with real Stellar and Soroban RPC interactions. Read operations simulate against the configured network. Writes show their arguments for review before Freighter is asked to sign.</p>
+        <div className="steps">
+          <div className="step"><span>01</span><b>Configure</b><p>Choose your RPC, network, and contract IDs in settings.</p></div>
+          <div className="step"><span>02</span><b>Inspect</b><p>Check live network state and read only what the supplied contracts return.</p></div>
+          <div className="step"><span>03</span><b>Act with care</b><p>Review typed arguments, then confirm a transaction with your wallet.</p></div>
+        </div>
+        <Link href="/settings" className="text-link" data-testid="link-principle-settings">Review network setup <ArrowRight size={15} /></Link>
+      </div>
+    </section>
+
+    <section className="landing-transparency section-wrap" id="transparency">
+      <div className="transparency-head">
+        <div className="section-label">03 / WHAT'S ACTUALLY LIVE</div>
+        <h2>Trust starts<br />with the setup.</h2>
+      </div>
+      <div className="transparency-panel">
+        <div className="panel-topline"><span>NETWORK CONNECTION</span><span className={`network-state ${network ? 'state-up' : ''}`}><i />{network ? 'RPC RESPONDING' : networkError ? 'CHECK UNAVAILABLE' : 'CHECKING RPC'}</span></div>
+        <div className="network-detail"><div><small>Selected network</small><strong data-testid="text-landing-network">{networkLabel}</strong></div><div><small>RPC endpoint</small><strong className="endpoint-value" data-testid="text-landing-rpc">{settings.rpcUrl}</strong></div></div>
+        <div className="panel-divider" />
+        <p>Network status comes from the configured RPC health check. Contract IDs are supplied by the operator in this browser; SolNet does not imply a deployment or invent contract responses.</p>
+        <div className="panel-footer"><span><span className="mini-check"><ShieldCheck size={13} /></span> Operator-configured</span><span data-testid="text-configured-contract-count">{configuredContracts} contract ID{configuredContracts === 1 ? '' : 's'} configured</span></div>
+        <Link href="/settings" className="panel-settings-link" data-testid="link-transparency-settings">View network settings <ArrowUpRight size={14} /></Link>
+      </div>
+    </section>
+
+    <section className="landing-closer">
+      <div className="closer-grid" aria-hidden="true" />
+      <div className="closer-inner"><span className="section-label">ENERGY IS A COMMON GOOD.</span><h2>Make the system<br />easier to <em>see.</em></h2><p>Start with the live console. Bring your own network configuration and explore what it can tell you.</p>
+        <Link href="/dashboard" className="closer-cta" data-testid="link-closer-dashboard">Enter the SolNet console <ArrowRight size={17} /></Link>
+      </div>
+      <div className="closer-side-mark"><span>SN</span><i /></div>
+    </section>
+
+    <footer className="landing-footer">
+      <Link href="/" className="landing-brand footer-brand" data-testid="link-footer-brand"><span className="landing-mark"><Cable size={17} /></span><span>solnet<span className="brand-period">.</span></span></Link>
+      <span>Community energy infrastructure, made inspectable.</span>
+      <div><Link href="/dashboard" data-testid="link-footer-dashboard">Console</Link><Link href="/settings" data-testid="link-footer-settings">Network setup</Link></div>
+    </footer>
+  </main>;
 }
 interface AppState {
   settings: SolNetSettings;
@@ -212,24 +168,24 @@ const useAppState = () => {
 
 type Item = { path: string; title: string; summary: string; section: string; icon: typeof Gauge; contract?: ContractKey; method?: string; kind?: 'read' | 'write' | 'none' };
 const PAGES: Item[] = [
-  { path:'/dashboard', title:'Community dashboard', summary:'Your account and neighborhood energy status, read directly from the configured network.', section:'Community', icon:Gauge, contract:'account_ledger', method:'get_balance', kind:'read' },
-  { path:'/payments', title:'Add energy credit', summary:'Convert a stablecoin deposit into community energy credit through the deployed account ledger.', section:'Community', icon:ArrowDownToLine, contract:'account_ledger', method:'deposit_stablecoin', kind:'write' },
-  { path:'/meters', title:'Meters & billing', summary:'Meter telemetry and billing history are shown only when the configured contract returns them.', section:'Community', icon:Activity, contract:'micro_billing', method:'get_meter_logs', kind:'read' },
-  { path:'/emergency', title:'Emergency support', summary:'Review disconnection status or request an emergency extension for a registered meter.', section:'Community', icon:ShieldAlert, contract:'delinquency_disconnector', method:'check_disconnection_status', kind:'read' },
-  { path:'/topology', title:'Network topology', summary:'Neighborhood nodes and physical routing reported by the live grid contract.', section:'Operations', icon:Network, contract:'grid_topology', method:'get_network_nodes', kind:'read' },
-  { path:'/market', title:'Energy market', summary:'Submit a bid or inspect the peer-to-peer auction interface. Unknown ask arguments are not inferred.', section:'Operations', icon:ChartNoAxesCombined, contract:'yield_auction', method:'place_energy_bid', kind:'write' },
-  { path:'/pricing', title:'Live tariff', summary:'Current tariff values are calculated by the configured peak-load contract.', section:'Operations', icon:CircleDollarSign, contract:'peak_load_adjuster', method:'calculate_current_tariff', kind:'read' },
-  { path:'/batteries', title:'Storage reserves', summary:'Community pool reserves and battery health from on-chain contract reads.', section:'Operations', icon:BatteryCharging, contract:'battery_pool', method:'get_pool_reserves', kind:'read' },
-  { path:'/campaigns', title:'Community campaigns', summary:'Funding campaigns currently returned by the community capital contract.', section:'Capital & governance', icon:Sparkles, contract:'community_capital', method:'get_active_campaigns', kind:'read' },
-  { path:'/portfolio', title:'Investor portfolio', summary:'Read investor yield share for the currently connected wallet.', section:'Capital & governance', icon:Landmark, contract:'community_capital', method:'get_investor_yield_share', kind:'read' },
-  { path:'/proposals', title:'Capital proposals', summary:'Submit capital expenditure proposals or vote where the deployed ABI is known.', section:'Capital & governance', icon:FileText, contract:'community_capital', method:'submit_capex_proposal', kind:'write' },
+  { path:'/dashboard', title:'Community dashboard', summary:'Your Watt-credit balance, read live from the deployed account ledger.', section:'Community', icon:Gauge, contract:'account_ledger', method:'watt_balance', kind:'read' },
+  { path:'/payments', title:'Add energy credit', summary:'Deposit stablecoin to mint Watt-credits on the deployed account ledger.', section:'Community', icon:ArrowDownToLine, contract:'account_ledger', method:'deposit', kind:'write' },
+  { path:'/meters', title:'Meters & billing', summary:'Unsettled balance and reading count per account, read live from micro-billing.', section:'Community', icon:Activity, contract:'micro_billing', method:'unsettled', kind:'read' },
+  { path:'/emergency', title:'Delinquency assessment', summary:'Assess a live Watt-credit balance for grace-period or disconnect verdict.', section:'Community', icon:ShieldAlert, contract:'delinquency_disconnector', method:'assess', kind:'read' },
+  { path:'/topology', title:'Network topology', summary:'Node count, neighbours and reachability reported by the live grid contract.', section:'Operations', icon:Network, contract:'grid_topology', method:'node_count', kind:'read' },
+  { path:'/market', title:'Energy market', summary:'Place a bid against a live yield auction listing.', section:'Operations', icon:ChartNoAxesCombined, contract:'yield_auction', method:'place_bid', kind:'write' },
+  { path:'/pricing', title:'Live tariff', summary:'Current per-watt-hour price from the deployed peak-load adjuster.', section:'Operations', icon:CircleDollarSign, contract:'peak_load_adjuster', method:'current_price', kind:'read' },
+  { path:'/batteries', title:'Storage reserves', summary:'Available maintenance reserve from the deployed battery pool.', section:'Operations', icon:BatteryCharging, contract:'battery_pool', method:'available', kind:'read' },
+  { path:'/campaigns', title:'Community capital', summary:'Total capital backing the deployed community fund.', section:'Capital & governance', icon:Sparkles, contract:'community_capital', method:'total_capital', kind:'read' },
+  { path:'/portfolio', title:'Investor portfolio', summary:'Share balance for the connected wallet, read live from the fund.', section:'Capital & governance', icon:Landmark, contract:'community_capital', method:'shares_of', kind:'read' },
+  { path:'/proposals', title:'Capital proposals', summary:'No proposal or voting entrypoint exists on the deployed fund contract.', section:'Capital & governance', icon:FileText, kind:'none' },
   { path:'/audit', title:'Revenue & audit', summary:'Review raw Soroban events from a selected deployed contract. Revenue semantics require the deployed contract ABI.', section:'Capital & governance', icon:BookOpenCheck, kind:'none' },
-  { path:'/devices', title:'Device registry', summary:'Inspect or register authorized hardware identities through the configured IoT registrar.', section:'Field systems', icon:Cpu, contract:'iot_registrar', method:'register_new_device', kind:'write' },
-  { path:'/offline-ingestion', title:'Offline ingestion', summary:'Submit signed field telemetry using the registered contract method; its ABI arguments are unspecified.', section:'Field systems', icon:Radio, contract:'cryptographic_oracle', method:'submit_offline_telemetry_batch', kind:'write' },
-  { path:'/firmware', title:'Firmware attestation', summary:'Verify a device firmware hash against the configured firmware contract.', section:'Field systems', icon:HardDrive, contract:'firmware_verifier', method:'verify_device_firmware', kind:'read' },
-  { path:'/incidents', title:'Device incidents', summary:'Investigate an incident and submit evidence only with the deployed contract and explicitly entered hashes.', section:'Field systems', icon:ShieldAlert, contract:'hardware_slash', method:'initiate_slash_sequence', kind:'write' },
+  { path:'/devices', title:'Device registry', summary:'Register or inspect meter public keys on the deployed IoT registrar.', section:'Field systems', icon:Cpu, contract:'iot_registrar', method:'register_device', kind:'write' },
+  { path:'/offline-ingestion', title:'Offline ingestion', summary:'Submit a signed offline telemetry batch to the deployed oracle.', section:'Field systems', icon:Radio, contract:'cryptographic_oracle', method:'submit_batch', kind:'write' },
+  { path:'/firmware', title:'Firmware attestation', summary:'Verify a device firmware hash against the deployed firmware verifier.', section:'Field systems', icon:HardDrive, contract:'firmware_verifier', method:'verify_device', kind:'read' },
+  { path:'/incidents', title:'Device incidents', summary:'Slash a proven offence against a posted collateral deposit.', section:'Field systems', icon:ShieldAlert, contract:'hardware_slash', method:'slash', kind:'write' },
   { path:'/parameters', title:'Protocol parameters', summary:'Administrative parameter methods were not specified. Use typed RPC tools only when the deployed ABI is known.', section:'Protocol', icon:SlidersHorizontal, kind:'none' },
-  { path:'/governance', title:'Governance', summary:'Read live proposals and cast a known-form vote. Proposal submission ABI remains unspecified.', section:'Protocol', icon:Vote, contract:'community_capital', method:'cast_proposal_vote', kind:'write' },
+  { path:'/governance', title:'Governance', summary:'No voting entrypoint exists on the deployed contracts.', section:'Protocol', icon:Vote, kind:'none' },
   { path:'/treasury', title:'Treasury distribution', summary:'Treasury distribution methods were not specified. Inspect live reserves or use typed RPC tools; no payout method is guessed.', section:'Protocol', icon:CircleDollarSign, kind:'none' },
   { path:'/developer-tools', title:'Developer tools', summary:'Run read simulations and carefully review typed contract invocations before Freighter signing.', section:'Protocol', icon:Blocks, kind:'none' },
   { path:'/settings', title:'Network settings', summary:'Configure RPC, network, and real Soroban contract IDs. Changes are stored in this browser.', section:'System', icon:SettingsIcon, kind:'none' },
@@ -274,12 +230,6 @@ function App() {
       </RoutedErrorBoundary>
     </StateContext.Provider>
   </WouterRouter><Toaster /></TooltipProvider></QueryClientProvider>;
-}
-
-function RedirectDashboard() {
-  const [, navigate] = useLocation();
-  useEffect(() => { navigate('/dashboard', { replace: true }); }, [navigate]);
-  return null;
 }
 
 function RoutedErrorBoundary({ children }: { children: ReactNode }) {
@@ -361,6 +311,12 @@ function OperationalView({ page }: { page: Item }) {
   const [account, setAccount] = useState('');
   const [proposalId, setProposalId] = useState('');
   const [support, setSupport] = useState(true);
+  const [seq, setSeq] = useState('');
+  const [auctionId, setAuctionId] = useState('');
+  const [batchId, setBatchId] = useState('');
+  const [entriesHex, setEntriesHex] = useState('');
+  const [digestHex, setDigestHex] = useState('');
+  const [offence, setOffence] = useState('');
   const [readResult, setReadResult] = useState<Outcome | null>(null);
   const [busy, setBusy] = useState(false);
   const [review, setReview] = useState(false);
@@ -369,17 +325,18 @@ function OperationalView({ page }: { page: Item }) {
   const contractId = page.contract ? settings.contracts[page.contract] : '';
   const args = useMemo(() => {
     if (!method) return [];
-    if (page.path === '/dashboard') return [{name:'user',type:'address' as const,value:account || wallet || ''}];
+    if (page.path === '/dashboard') return [{name:'account',type:'address' as const,value:account || wallet || ''}];
     if (page.path === '/portfolio') return [{name:'investor',type:'address' as const,value:account || wallet || ''}];
-    if (page.path === '/payments') return [{name:'user',type:'address' as const,value:wallet || ''},{name:'amount',type:'u128' as const,value:amount}];
-    if (page.path === '/meters' || page.path === '/emergency') return [{name:'meter_id',type:'bytes32' as const,value:meterId}];
-    if (page.path === '/market') return [{name:'bidder',type:'address' as const,value:account || wallet || ''},{name:'watt_hours',type:'u64' as const,value:amount},{name:'max_price',type:'u128' as const,value:hash}];
-    if (page.path === '/firmware') return [{name:'device_id',type:'bytes32' as const,value:deviceId},{name:'active_hash',type:'bytes32' as const,value:hash}];
-    if (page.path === '/governance') return [{name:'proposal_id',type:'u32' as const,value:proposalId},{name:'support',type:'bool' as const,value:support}];
-    if (page.path === '/devices') return [{name:'device_id',type:'bytes32' as const,value:deviceId},{name:'hardware_pubkey',type:'address' as const,value:account || wallet || ''}];
-    if (page.path === '/incidents') return [{name:'malicious_device',type:'bytes32' as const,value:deviceId},{name:'evidence_hash',type:'bytes32' as const,value:hash}];
+    if (page.path === '/payments') return [{name:'account',type:'address' as const,value:wallet || ''},{name:'amount',type:'i128' as const,value:amount}];
+    if (page.path === '/meters') return [{name:'account',type:'address' as const,value:account || wallet || ''}];
+    if (page.path === '/emergency') return [{name:'account',type:'address' as const,value:account || wallet || ''},{name:'current_seq',type:'u64' as const,value:seq}];
+    if (page.path === '/market') return [{name:'buyer',type:'address' as const,value:account || wallet || ''},{name:'auction_id',type:'u64' as const,value:auctionId},{name:'price',type:'i128' as const,value:hash}];
+    if (page.path === '/firmware') return [{name:'device_key',type:'bytes32' as const,value:deviceId},{name:'firmware_hash',type:'bytes32' as const,value:hash}];
+    if (page.path === '/devices') return [{name:'public_key',type:'bytes32' as const,value:deviceId},{name:'model',type:'bytes' as const,value:hash}];
+    if (page.path === '/offline-ingestion') return [{name:'submitter',type:'address' as const,value:account || wallet || ''},{name:'batch_id',type:'bytes32' as const,value:batchId},{name:'entries',type:'bytes' as const,value:entriesHex},{name:'digest',type:'bytes32' as const,value:digestHex}];
+    if (page.path === '/incidents') return [{name:'admin',type:'address' as const,value:wallet || ''},{name:'owner',type:'address' as const,value:account},{name:'offence',type:'u32' as const,value:offence}];
     return defaultArguments(method);
-  }, [method, page.path, account, wallet, amount, meterId, hash, deviceId, proposalId, support]);
+  }, [method, page.path, account, wallet, amount, meterId, hash, deviceId, proposalId, support, seq, auctionId, batchId, entriesHex, digestHex, offence]);
   const incomplete = args.some(arg => arg.value === '' || (typeof arg.value === 'string' && !arg.value.trim()));
   const canRead = !!method && method.access === 'read' && !!wallet && isValidContractAddress(contractId) && !incomplete;
   const canWrite = !!method && method.access === 'write' && !!wallet && isValidContractAddress(contractId) && !incomplete;
@@ -414,14 +371,15 @@ function OperationalView({ page }: { page: Item }) {
         <div className="field"><label>Method</label><div className="input mono" data-testid="text-target-method">{method?.name ?? 'Not defined in contract registry'}</div></div>
         {contract && <div className="notice neutral" style={{marginBottom:14}}>{contract.description} Interfaces are not independently ABI-verified; only the supplied registry is used.</div>}
         {!wallet && <div className="notice" style={{marginBottom:13}}>Connect Freighter to read contract state. Simulation requires a source account and a matching network.</div>}
-      {page.path === '/dashboard' || page.path === '/portfolio' ? <AddressField label={page.path === '/portfolio' ? 'Investor address' : 'Account address'} value={account} onChange={setAccount} fallback={wallet} testid="input-account-address" /> : null}
-        {(page.path === '/meters' || page.path === '/emergency') && <TextField label="Meter ID · 32-byte hex" value={meterId} onChange={setMeterId} placeholder="Enter registered meter ID" testid="input-meter-id" />}
-        {(page.path === '/payments' || page.path === '/market') && <TextField label={page.path === '/payments' ? 'Deposit amount · smallest token units' : 'Energy amount · watt-hours'} value={amount} onChange={setAmount} placeholder="Enter integer amount" testid="input-amount" />}
-        {page.path === '/market' && <TextField label="Maximum price · smallest token units" value={hash} onChange={setHash} placeholder="Enter integer price" testid="input-max-price" />}
-        {(page.path === '/firmware' || page.path === '/devices' || page.path === '/incidents') && <TextField label="Device ID · 32-byte hex" value={deviceId} onChange={setDeviceId} placeholder="Enter device identifier" testid="input-device-id" />}
-        {(page.path === '/firmware' || page.path === '/incidents') && <TextField label={page.path === '/firmware' ? 'Active firmware hash · 32-byte hex' : 'Evidence hash · 32-byte hex'} value={hash} onChange={setHash} placeholder="Enter exact hash" testid="input-evidence-hash" />}
-        {page.path === '/devices' && <AddressField label="Hardware public key address" value={account} onChange={setAccount} fallback={wallet} testid="input-hardware-address" />}
-        {page.path === '/governance' && <><TextField label="Proposal ID" value={proposalId} onChange={setProposalId} placeholder="Enter on-chain proposal number" testid="input-proposal-id" /><label className="row" style={{justifyContent:'flex-start',fontSize:10,gap:8,marginBottom:13}}><input type="checkbox" checked={support} onChange={e=>setSupport(e.target.checked)} data-testid="input-vote-support" /> Support proposal</label></>}
+      {(page.path === '/dashboard' || page.path === '/portfolio' || page.path === '/meters') ? <AddressField label={page.path === '/portfolio' ? 'Investor address' : 'Account address'} value={account} onChange={setAccount} fallback={wallet} testid="input-account-address" /> : null}
+        {page.path === '/emergency' && <><AddressField label="Account address" value={account} onChange={setAccount} fallback={wallet} testid="input-account-address" /><TextField label="Current ledger sequence" value={seq} onChange={setSeq} placeholder="Enter current ledger number" testid="input-current-seq" /></>}
+        {page.path === '/payments' && <TextField label="Deposit amount · smallest currency units" value={amount} onChange={setAmount} placeholder="Enter integer amount" testid="input-amount" />}
+        {page.path === '/market' && <><TextField label="Auction ID" value={auctionId} onChange={setAuctionId} placeholder="Enter on-chain auction number" testid="input-auction-id" /><TextField label="Bid price per milli-watt-hour · integer" value={hash} onChange={setHash} placeholder="Enter integer price" testid="input-max-price" /></>}
+        {(page.path === '/firmware' || page.path === '/devices') && <TextField label="Device public key · 32-byte hex" value={deviceId} onChange={setDeviceId} placeholder="Enter device public key hex" testid="input-device-id" />}
+        {page.path === '/devices' && <TextField label="Model bytes · hex" value={hash} onChange={setHash} placeholder="Enter model bytes as hex" testid="input-model-bytes" />}
+        {page.path === '/firmware' && <TextField label="Firmware hash · 32-byte hex" value={hash} onChange={setHash} placeholder="Enter exact firmware hash" testid="input-evidence-hash" />}
+        {page.path === '/offline-ingestion' && <><TextField label="Batch ID · 32-byte hex" value={batchId} onChange={setBatchId} placeholder="Enter batch identifier hex" testid="input-batch-id" /><TextField label="Entries · hex-encoded bytes" value={entriesHex} onChange={setEntriesHex} placeholder="Enter telemetry entries as hex" testid="input-entries-hex" /><TextField label="Digest · 32-byte hex" value={digestHex} onChange={setDigestHex} placeholder="Enter batch digest hex" testid="input-digest-hex" /></>}
+        {page.path === '/incidents' && <><AddressField label="Owner address" value={account} onChange={setAccount} fallback={wallet} testid="input-owner-address" /><TextField label="Offence code · 1 = spoofed generation, 2 = router bypass" value={offence} onChange={setOffence} placeholder="Enter offence code" testid="input-offence" /></>}
         {page.kind === 'read' && <button className="button" disabled={!canRead || busy} onClick={() => void runRead()} data-testid="button-read-contract"><RefreshCw size={13} />{busy ? 'Reading…' : 'Read live contract'}</button>}
         {page.kind === 'write' && <div>
           <div className="notice" style={{marginBottom:12}}>A transaction is not sent until you review the exact arguments and confirm. Freighter will request the final signature.</div>
@@ -446,8 +404,7 @@ function OperationalView({ page }: { page: Item }) {
       </section>
     </div>
     {page.path === '/dashboard' && <DashboardSecondary />}
-    {page.path === '/emergency' && <EmergencyExtension meterId={meterId} />}
-    {page.path === '/batteries' && <AuxiliaryRead contractKey="battery_pool" methodName="get_battery_health_index" title="Battery health index" />}
+    {page.path === '/batteries' && <AuxiliaryRead contractKey="battery_pool" methodName="available" title="Available reserves" />}
     {page.path === '/payments' && <div className="section-kicker">Deposit flow · stablecoin to energy credit</div>}
     {page.path === '/campaigns' && <div className="section-kicker">Funding opportunities</div>}
     {page.path === '/incidents' && <div className="section-kicker">Investigation record</div>}
@@ -532,32 +489,6 @@ function UnspecifiedInterfaceView({ page }: { page: Item }) {
   </div>;
 }
 
-function EmergencyExtension({ meterId }: { meterId:string }) {
-  const {settings,wallet}=useAppState();
-  const [review,setReview]=useState(false);
-  const [busy,setBusy]=useState(false);
-  const [outcome,setOutcome]=useState<Outcome|null>(null);
-  const contractId=settings.contracts.delinquency_disconnector;
-  const args:ContractArgument[]=[{name:'meter_id',type:'bytes32',value:meterId}];
-  const ready=!!wallet&&isValidContractAddress(contractId)&&meterId.trim().length>0;
-  const send=async()=>{
-    setBusy(true);setReview(false);setOutcome(null);
-    try{
-      await verifyContractDeployment(contractId,settings);
-      const response=await submitContractTransaction({config:settings,sourceAddress:wallet!,contractId,method:'request_emergency_extension',args});
-      setOutcome({kind:'tx',text:response.status==='SUCCESS'?'RPC confirmed the emergency extension request.':'RPC accepted the request; it is still pending.',hash:response.hash,status:response.status});
-    }catch(error){setOutcome({kind:'error',text:error instanceof Error?error.message:'RPC could not submit the extension request.'});}
-    finally{setBusy(false);}
-  };
-  return <section className="card" style={{marginTop:15}}>
-    <div className="card-header"><div><h2 className="card-title">Request emergency extension</h2><div className="card-subtitle">Known registry signature · delinquency_disconnector.request_emergency_extension(meter_id: bytes32)</div></div><span className="metric-icon"><ShieldAlert/></span></div>
-    <p className="field-help" style={{marginBottom:12}}>Uses the meter ID entered above. The read status check and the extension request are separate on-chain operations.</p>
-    {!review?<button className="button" disabled={!ready||busy} onClick={()=>setReview(true)} data-testid="button-review-emergency-extension">Review extension request</button>:<div className="notice neutral" data-testid="panel-emergency-review"><b>Confirm extension request</b><div className="field-help" style={{marginTop:6}}>Target · <span className="mono">{contractId}</span></div><div className="field-help">Method · <span className="mono">request_emergency_extension</span></div><pre className="result-box" style={{margin:'10px 0'}}>{toDisplayJson(args)}</pre><div className="row" style={{justifyContent:'flex-start'}}><button className="button" disabled={busy} onClick={()=>void send()} data-testid="button-confirm-emergency-extension">{busy?'Awaiting RPC…':'Confirm & sign with Freighter'}</button><button className="button ghost" onClick={()=>setReview(false)} data-testid="button-cancel-emergency-extension">Cancel</button></div></div>}
-    {outcome&&<div style={{marginTop:12}}>{outcome.kind==='error'?<div className="notice error" data-testid="status-emergency-error">{outcome.text}</div>:<><div className="notice neutral" data-testid="status-emergency-result">{outcome.text}</div><div className="section-kicker">Transaction hash · {outcome.status}</div><div className="result-box" data-testid="text-emergency-hash">{outcome.hash}</div></>}</div>}
-    {!contractId&&<div className="field-help" style={{marginTop:10}}>The disconnection contract is not configured. Set its real ID in Network settings.</div>}
-  </section>;
-}
-
 function AuxiliaryRead({contractKey,methodName,title}:{contractKey:ContractKey;methodName:string;title:string}){
   const {settings,wallet}=useAppState();
   const [value,setValue]=useState<Outcome|null>(null);
@@ -577,7 +508,7 @@ function AuxiliaryRead({contractKey,methodName,title}:{contractKey:ContractKey;m
   };
   return <section className="card" style={{marginTop:15}}>
     <div className="card-header"><div><h2 className="card-title">{title}</h2><div className="card-subtitle mono">{contractKey}.{methodName}()</div></div><StatusTag tone={value?.kind==='read'?'ok':value?.kind==='error'?'error':''}>{value?value.kind==='error'?'ERROR':'LIVE DATA':'NO READ'}</StatusTag></div>
-    <button className="button secondary" disabled={!wallet||!isValidContractAddress(contractId)||busy} onClick={()=>void read()} data-testid="button-read-battery-health"><RefreshCw size={13}/>{busy?'Reading…':'Read battery health index'}</button>
+    <button className="button secondary" disabled={!wallet||!isValidContractAddress(contractId)||busy} onClick={()=>void read()} data-testid="button-read-battery-health"><RefreshCw size={13}/>{busy?'Reading…':'Read available reserves'}</button>
     {!wallet&&<div className="field-help" style={{marginTop:8}}>Connect a wallet to use as the simulation source.</div>}
     {!contractId&&<div className="field-help" style={{marginTop:8}}>Battery pool contract ID is unconfigured.</div>}
     {value&&<div style={{marginTop:12}}>{value.kind==='error'?<div className="notice error" data-testid="status-battery-error">{value.text}</div>:<pre className="result-box" data-testid="data-battery-health">{value.text}</pre>}</div>}
@@ -611,8 +542,8 @@ function DashboardOverview() {
           config: settings,
           sourceAddress: wallet,
           contractId: balanceContract,
-          method: 'get_balance',
-          args: [{name:'user',type:'address',value:wallet}],
+          method: 'watt_balance',
+          args: [{name:'account',type:'address',value:wallet}],
         });
         if (active) {
           setBalance({kind:'read',text:toDisplayJson(value)});
