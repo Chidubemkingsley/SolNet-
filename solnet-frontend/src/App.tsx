@@ -11,6 +11,7 @@ import {
   HardDrive, Landmark, Menu, Network, Radio, RefreshCw, ShieldAlert, SlidersHorizontal,
   Sparkles, Vote, Wallet, X, Zap, Settings, Settings as SettingsIcon, Wrench, ChartNoAxesCombined,
   Globe, Leaf, Lightning, Shield, Users, BarChart, Zap as ZapIcon,
+  Github, ExternalLink,
 } from 'lucide-react';
 import {
   assertWalletNetwork, checkRpcStatus, connectStellarWallet, isValidContractAddress, NETWORKS,
