@@ -50,7 +50,7 @@ export function getDefaultSettings(): SolNetSettings {
   const contracts = Object.fromEntries(
     Object.entries(ENV_CONTRACTS).map(([key, value]) => [
       key,
-      value?.trim() ?? FALLBACK_CONTRACTS[key] ?? "",
+      value?.trim() ?? FALLBACK_CONTRACTS[key as ContractKey] ?? "",
     ]),
   ) as Record<ContractKey, string>;
   return {

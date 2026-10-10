@@ -11,12 +11,34 @@ import {
 } from "@stellar/stellar-sdk";
 import { rpc } from "@stellar/stellar-sdk";
 import {
-  getAddress,
-  getNetwork,
-  isConnected,
-  requestAccess,
-  signTransaction,
-} from "@stellar/freighter-api";
+  StellarWalletsKit,
+  Networks as KitNetworks,
+  type ISupportedWallet,
+} from "@creit.tech/stellar-wallets-kit";
+import {
+  FreighterModule,
+  FREIGHTER_ID,
+} from "@creit.tech/stellar-wallets-kit/modules/freighter";
+import {
+  AlbedoModule,
+  ALBEDO_ID,
+} from "@creit.tech/stellar-wallets-kit/modules/albedo";
+import {
+  xBullModule,
+  XBULL_ID,
+} from "@creit.tech/stellar-wallets-kit/modules/xbull";
+import {
+  RabetModule,
+  RABET_ID,
+} from "@creit.tech/stellar-wallets-kit/modules/rabet";
+import {
+  LobstrModule,
+  LOBSTR_ID,
+} from "@creit.tech/stellar-wallets-kit/modules/lobstr";
+import {
+  HanaModule,
+  HANA_ID,
+} from "@creit.tech/stellar-wallets-kit/modules/hana";
 
 export type StellarNetwork = "testnet" | "mainnet" | "standalone";
 
@@ -145,39 +167,173 @@ function assertRpcPassphrase(
   }
 }
 
-export async function connectStellarWallet(
-  config: StellarConnectionConfig,
-): Promise<string> {
-  const installed = await isConnected();
-  if (installed.error) throw new Error(installed.error.message);
-  if (!installed.isConnected) {
-    throw new Error("Freighter is not installed or available in this browser.");
-  }
-  const access = await requestAccess();
-  if (access.error) throw new Error(access.error.message);
-  if (!access.address) throw new Error("Freighter did not return a public address.");
-  await assertWalletNetwork(config);
-  return access.address;
+export interface ConnectedWallet {
+  address: string;
+  walletId: string;
+  walletName: string;
 }
 
-export async function readConnectedWallet(): Promise<string | null> {
-  const installed = await isConnected();
-  if (installed.error) throw new Error(installed.error.message);
-  if (!installed.isConnected) return null;
-  const { address, error } = await getAddress();
-  if (error) throw new Error(error.message);
-  return address || null;
+export const WALLET_STORAGE_KEY = "solnet.wallet.v1";
+
+function kitNetworkFor(config: StellarConnectionConfig): KitNetworks {
+  switch (config.network) {
+    case "mainnet":
+      return KitNetworks.PUBLIC;
+    case "standalone":
+      return KitNetworks.STANDALONE;
+    case "testnet":
+    default:
+      return KitNetworks.TESTNET;
+  }
+}
+
+let kitInitKey: string | null = null;
+
+function ensureKit(config: StellarConnectionConfig): void {
+  if (kitInitKey === config.network) return;
+  StellarWalletsKit.init({
+    modules: [
+      new FreighterModule(),
+      new AlbedoModule(),
+      new xBullModule(),
+      new RabetModule(),
+      new LobstrModule(),
+      new HanaModule(),
+    ],
+    network: kitNetworkFor(config),
+  });
+  kitInitKey = config.network;
+}
+
+export async function listWallets(
+  config: StellarConnectionConfig,
+): Promise<ISupportedWallet[]> {
+  ensureKit(config);
+  return StellarWalletsKit.refreshSupportedWallets();
+}
+
+export function readStoredWallet(): ConnectedWallet | null {
+  try {
+    const stored = localStorage.getItem(WALLET_STORAGE_KEY);
+    if (!stored) return null;
+    const parsed = JSON.parse(stored) as Partial<ConnectedWallet>;
+    if (
+      typeof parsed.address !== "string" ||
+      typeof parsed.walletId !== "string" ||
+      !parsed.address ||
+      !parsed.walletId
+    ) {
+      return null;
+    }
+    return {
+      address: parsed.address,
+      walletId: parsed.walletId,
+      walletName:
+        typeof parsed.walletName === "string" && parsed.walletName
+          ? parsed.walletName
+          : parsed.walletId,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function storeWallet(wallet: ConnectedWallet): void {
+  localStorage.setItem(WALLET_STORAGE_KEY, JSON.stringify(wallet));
+}
+
+function clearStoredWallet(): void {
+  localStorage.removeItem(WALLET_STORAGE_KEY);
+}
+
+function walletDisplayName(walletId: string): string {
+  switch (walletId) {
+    case FREIGHTER_ID:
+      return "Freighter";
+    case ALBEDO_ID:
+      return "Albedo";
+    case XBULL_ID:
+      return "xBull";
+    case RABET_ID:
+      return "Rabet";
+    case LOBSTR_ID:
+      return "Lobstr";
+    case HANA_ID:
+      return "Hana";
+    default:
+      return walletId;
+  }
+}
+
+export async function connectStellarWallet(
+  config: StellarConnectionConfig,
+  walletId: string,
+): Promise<ConnectedWallet> {
+  ensureKit(config);
+  StellarWalletsKit.setWallet(walletId);
+  const { address } = await StellarWalletsKit.fetchAddress();
+  if (!address) {
+    throw new Error("The selected wallet did not return a public address.");
+  }
+  await assertWalletNetwork(config);
+  const connected: ConnectedWallet = {
+    address,
+    walletId,
+    walletName: walletDisplayName(walletId),
+  };
+  storeWallet(connected);
+  return connected;
+}
+
+export async function readConnectedWallet(
+  config: StellarConnectionConfig,
+): Promise<ConnectedWallet | null> {
+  const stored = readStoredWallet();
+  if (!stored) return null;
+  // Only extension wallets with persistent site permissions (Freighter) can be
+  // re-read silently. Others would pop a window on page load, so for those the
+  // stored selection is kept for one-click reconnect instead.
+  if (stored.walletId !== FREIGHTER_ID) return null;
+  try {
+    ensureKit(config);
+    StellarWalletsKit.setWallet(stored.walletId);
+    const { address } = await StellarWalletsKit.fetchAddress();
+    if (!address) return null;
+    const connected: ConnectedWallet = { ...stored, address };
+    storeWallet(connected);
+    return connected;
+  } catch {
+    return null;
+  }
+}
+
+export async function disconnectStellarWallet(): Promise<void> {
+  try {
+    await StellarWalletsKit.disconnect();
+  } catch {
+    // Disconnect is best-effort; the local session is cleared regardless.
+  } finally {
+    clearStoredWallet();
+  }
 }
 
 export async function assertWalletNetwork(
   config: StellarConnectionConfig,
 ): Promise<void> {
-  const walletNetwork = await getNetwork();
-  if (walletNetwork.error) throw new Error(walletNetwork.error.message);
   const expected = getNetworkPassphrase(config);
-  if (walletNetwork.networkPassphrase !== expected) {
+  let reported: string;
+  try {
+    const network = await StellarWalletsKit.getNetwork();
+    reported = network.networkPassphrase;
+  } catch {
+    // Not every wallet reports its network. Signing below always carries the
+    // explicit passphrase and the RPC-side check still guards the endpoint,
+    // so an unreportable network is not a blocker.
+    return;
+  }
+  if (reported !== expected) {
     throw new Error(
-      `Freighter is on ${walletNetwork.network || "a different network"}. Switch it to ${NETWORKS[config.network].label} before continuing.`,
+      `The connected wallet is on a different network. Switch it to ${NETWORKS[config.network].label} before continuing.`,
     );
   }
 }
@@ -312,12 +468,16 @@ export async function submitContractTransaction(input: {
     .build();
 
   const prepared = await server.prepareTransaction(transaction);
-  const signature = await signTransaction(prepared.toXDR(), {
-    address: input.sourceAddress,
-    networkPassphrase: passphrase,
-  });
-  if (signature.error) throw new Error(signature.error.message);
-  const signed = TransactionBuilder.fromXDR(signature.signedTxXdr, passphrase);
+  ensureKit(input.config);
+  const { signedTxXdr } = await StellarWalletsKit.signTransaction(
+    prepared.toXDR(),
+    {
+      address: input.sourceAddress,
+      networkPassphrase: passphrase,
+    },
+  );
+  if (!signedTxXdr) throw new Error("The connected wallet did not return a signed transaction.");
+  const signed = TransactionBuilder.fromXDR(signedTxXdr, passphrase);
   const submitted = await server.sendTransaction(signed);
   if (submitted.status === "ERROR") {
     throw new Error(`Stellar RPC rejected the transaction (hash ${submitted.hash}).`);

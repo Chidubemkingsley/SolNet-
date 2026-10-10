@@ -435,3 +435,13 @@ td:first-child,th:first-child { padding-left:0; }
   .hero-art { height: 300px; }
   .node { transform: scale(.92); }
 }
+
+/* Wallet picker */
+.wallet-modal-overlay { position: fixed; inset: 0; z-index: 50; background: rgba(19,38,39,.45); display: grid; place-items: center; padding: 20px; animation: arrive .2s both; }
+.wallet-modal { width: 100%; max-width: 420px; background: hsl(var(--card)); border: 1px solid hsl(var(--card-border)); border-radius: 12px; padding: 20px; box-shadow: var(--shadow-lg); }
+.wallet-modal-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; margin-bottom: 14px; }
+.wallet-list { display: grid; gap: 8px; }
+.wallet-option { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; min-height: 46px; padding: 0 14px; border-radius: 8px; border: 1px solid hsl(var(--border)); background: hsl(var(--card)); color: hsl(var(--foreground)); font-size: 12px; font-weight: 700; transition: border-color .16s, transform .16s; }
+.wallet-option:hover:not(:disabled) { border-color: hsl(var(--primary)); transform: translateY(-1px); }
+.wallet-option:disabled { cursor: not-allowed; opacity: .55; }
+.wallet-option-name { letter-spacing: -.01em; }

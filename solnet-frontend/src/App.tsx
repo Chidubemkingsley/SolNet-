@@ -10,19 +10,21 @@ import {
   ChevronRight, CircleDollarSign, Cpu, Database, FileClock, FileText, Gauge,
   HardDrive, Landmark, Menu, Network, PanelsTopLeft, Radio, RefreshCw, Shield, ShieldAlert, ShieldCheck, SlidersHorizontal,
   Sparkles, Sun, Vote, Wallet, X, Zap, Settings, Settings as SettingsIcon, Wrench, ChartNoAxesCombined,
-  Globe, Leaf, Lightning, Users, BarChart, Zap as ZapIcon,
+  Globe, Leaf, Users, BarChart, Zap as ZapIcon,
   Github, ExternalLink,
 } from 'lucide-react';
 import {
-  assertWalletNetwork, checkRpcStatus, connectStellarWallet, isValidContractAddress, NETWORKS,
-  getNetworkPassphrase, readConnectedWallet, shortenAddress, simulateContractRead, submitContractTransaction,
-  fetchContractEvents, toDisplayJson, verifyContractDeployment, type ContractArgument, type NetworkStatus,
+  assertWalletNetwork, checkRpcStatus, connectStellarWallet, disconnectStellarWallet, isValidContractAddress, NETWORKS,
+  getNetworkPassphrase, listWallets, readConnectedWallet, readStoredWallet, shortenAddress, simulateContractRead, submitContractTransaction,
+  fetchContractEvents, toDisplayJson, verifyContractDeployment, type ConnectedWallet, type ContractArgument, type NetworkStatus,
   type SorobanArgumentType,
 } from '@/lib/helper';
+import type { ISupportedWallet } from '@creit.tech/stellar-wallets-kit';
 import { CONTRACTS, CONTRACT_BY_KEY, defaultArguments, type ContractKey, type ContractMethod } from '@/lib/contracts';
 import { loadSettings, saveSettings, type SolNetSettings } from '@/lib/config';
 
 const client = new QueryClient();
+type Outcome = { kind: 'read' | 'tx' | 'error'; text: string; hash?: string; status?: string };
 
 function LandingPage() {
   const { settings, network, networkError } = useAppState();
@@ -154,7 +156,10 @@ function LandingPage() {
 interface AppState {
   settings: SolNetSettings;
   wallet: string | null;
+  walletId: string | null;
+  walletName: string | null;
   setWallet: (value: string | null) => void;
+  setWalletMeta: (meta: { id: string; name: string } | null) => void;
   network: NetworkStatus | null;
   networkError: string;
   refreshNetwork: () => Promise<void>;
@@ -197,6 +202,8 @@ function titleFor(path: string) { return PAGES.find(item => item.path === path) 
 function App() {
   const [settings, setSettings] = useState<SolNetSettings>(() => loadSettings());
   const [wallet, setWallet] = useState<string | null>(null);
+  const [walletId, setWalletId] = useState<string | null>(null);
+  const [walletName, setWalletName] = useState<string | null>(null);
   const [network, setNetwork] = useState<NetworkStatus | null>(null);
   const [networkError, setNetworkError] = useState('');
   const [walletError, setWalletError] = useState('');
@@ -214,11 +221,28 @@ function App() {
   }, [settings.network, settings.rpcUrl, settings.customNetworkPassphrase]);
   useEffect(() => {
     let active = true;
-    readConnectedWallet().then(address => { if (active) setWallet(address); }).catch(error => { if (active) setWalletError(error instanceof Error ? error.message : 'Could not read wallet connection.'); });
+    const stored = readStoredWallet();
+    if (stored) {
+      setWalletId(stored.walletId);
+      setWalletName(stored.walletName);
+    }
+    readConnectedWallet({ network: settings.network, rpcUrl: settings.rpcUrl, customNetworkPassphrase: settings.customNetworkPassphrase })
+      .then(connected => {
+        if (!active || !connected) return;
+        setWallet(connected.address);
+        setWalletId(connected.walletId);
+        setWalletName(connected.walletName);
+      })
+      .catch(error => { if (active) setWalletError(error instanceof Error ? error.message : 'Could not read wallet connection.'); });
     return () => { active = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const updateSettings = (next: SolNetSettings) => { setSettings(next); saveSettings(next); };
-  const context: AppState = { settings, wallet, setWallet, network, networkError, refreshNetwork };
+  const setWalletMeta = (meta: { id: string; name: string } | null) => {
+    setWalletId(meta?.id ?? null);
+    setWalletName(meta?.name ?? null);
+  };
+  const context: AppState = { settings, wallet, walletId, walletName, setWallet, setWalletMeta, network, networkError, refreshNetwork };
   return <QueryClientProvider client={client}><TooltipProvider><WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
     <StateContext.Provider value={context}>
       <RoutedErrorBoundary>
@@ -241,14 +265,31 @@ function Shell({ page, menuOpen, setMenuOpen, walletError, setWalletError, updat
   page: Item; menuOpen: boolean; setMenuOpen: (open: boolean) => void; walletError: string;
   setWalletError: (error: string) => void; updateSettings: (settings: SolNetSettings) => void;
 }) {
-  const { settings, wallet, setWallet, network, networkError, refreshNetwork } = useAppState();
+  const { settings, wallet, walletName, setWallet, setWalletMeta, network, networkError, refreshNetwork } = useAppState();
   const [path] = useLocation();
-  const [connecting, setConnecting] = useState(false);
-  const connect = async () => {
-    setWalletError(''); setConnecting(true);
-    try { const address = await connectStellarWallet(settings); setWallet(address); }
-    catch (error) { setWalletError(error instanceof Error ? error.message : 'Wallet connection failed.'); }
-    finally { setConnecting(false); }
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [walletOptions, setWalletOptions] = useState<ISupportedWallet[]>([]);
+  const [loadingWallets, setLoadingWallets] = useState(false);
+  const [connectingId, setConnectingId] = useState<string | null>(null);
+  const openPicker = async () => {
+    setWalletError(''); setPickerOpen(true); setLoadingWallets(true);
+    try { setWalletOptions(await listWallets(settings)); }
+    catch (error) { setWalletError(error instanceof Error ? error.message : 'Could not list installed wallets.'); }
+    finally { setLoadingWallets(false); }
+  };
+  const selectWallet = async (id: string, name: string) => {
+    setWalletError(''); setConnectingId(id);
+    try {
+      const connected: ConnectedWallet = await connectStellarWallet(settings, id);
+      setWallet(connected.address);
+      setWalletMeta({ id: connected.walletId, name: connected.walletName });
+      setPickerOpen(false);
+    } catch (error) { setWalletError(error instanceof Error ? error.message : 'Wallet connection failed.'); }
+    finally { setConnectingId(null); }
+  };
+  const disconnect = async () => {
+    await disconnectStellarWallet();
+    setWallet(null); setWalletMeta(null); setWalletError('');
   };
   return <div className="app-shell">
     {menuOpen && <button className="mobile-scrim" aria-label="Close navigation" onClick={() => setMenuOpen(false)} data-testid="button-close-navigation" />}
@@ -275,10 +316,24 @@ function Shell({ page, menuOpen, setMenuOpen, walletError, setWalletError, updat
         <div className="row" style={{justifyContent:'flex-start', gap:10}}><button className="mobile-menu" onClick={() => setMenuOpen(true)} aria-label="Open navigation" data-testid="button-open-navigation"><Menu size={19} /></button><span className="crumb">SolNet / <b>{page.title}</b></span></div>
         <div className="top-actions">
           <div className="network-pill" data-testid="status-network-health"><span className="pulse-dot" style={network ? {background:'#3a9875'} : {background:'#bd8b45'}} />{network ? `${settings.network.toUpperCase()} · ${network.latencyMs}ms` : 'RPC UNAVAILABLE'}</div>
-          {wallet ? <button className="wallet-btn secondary" onClick={() => { setWallet(null); setWalletError(''); }} data-testid="button-wallet-disconnect"><Wallet size={14} />{shortenAddress(wallet)}<X size={13} /></button> :
-            <button className="wallet-btn" disabled={connecting} onClick={connect} data-testid="button-wallet-connect"><Wallet size={14} />{connecting ? 'Connecting…' : 'Connect wallet'}</button>}
+          {wallet ? <button className="wallet-btn secondary" onClick={() => void disconnect()} data-testid="button-wallet-disconnect" title={walletName ? `Connected with ${walletName}` : undefined}><Wallet size={14} />{walletName ? `${walletName} · ` : ''}{shortenAddress(wallet)}<X size={13} /></button> :
+            <button className="wallet-btn" onClick={() => void openPicker()} data-testid="button-wallet-connect"><Wallet size={14} />Connect wallet</button>}
         </div>
       </header>
+      {pickerOpen && <div className="wallet-modal-overlay" onClick={() => setPickerOpen(false)} data-testid="panel-wallet-picker">
+        <div className="wallet-modal" role="dialog" aria-label="Choose a Stellar wallet" onClick={e => e.stopPropagation()}>
+          <div className="wallet-modal-header"><div><h2 className="card-title">Choose a wallet</h2><div className="card-subtitle">Any wallet below signs the exact transaction you review.</div></div><button className="button ghost" onClick={() => setPickerOpen(false)} aria-label="Close wallet picker" data-testid="button-close-wallet-picker"><X size={14} /></button></div>
+          {loadingWallets ? <div className="skeleton-stack"><div className="skeleton-line"/><div className="skeleton-line"/></div> :
+            walletOptions.length === 0 ? <div className="notice">No supported wallets detected in this browser.</div> :
+            <div className="wallet-list">
+              {walletOptions.map(option => <button key={option.id} className="wallet-option" disabled={!option.isAvailable || connectingId !== null} onClick={() => void selectWallet(option.id, option.name)} data-testid={`button-connect-${option.id}`}>
+                <span className="wallet-option-name">{option.name}</span>
+                <span className={`status ${option.isAvailable ? 'ok' : 'warn'}`}>{!option.isAvailable ? 'NOT INSTALLED' : connectingId === option.id ? 'CONNECTING…' : 'CONNECT'}</span>
+              </button>)}
+            </div>}
+          <div className="field-help" style={{marginTop:10}}>Unavailable wallets need their browser extension or app installed first.</div>
+        </div>
+      </div>}
       <div className="content animate-in" key={path}>
         {walletError && <div className="notice error" data-testid="status-wallet-error" style={{marginBottom:14}}>{walletError}</div>}
         {networkError && <div className="notice neutral row" data-testid="status-rpc-error" style={{marginBottom:14}}><span>{networkError}</span><button className="button ghost" onClick={() => void refreshNetwork()} data-testid="button-rpc-retry"><RefreshCw size={13} />Retry RPC</button></div>}
