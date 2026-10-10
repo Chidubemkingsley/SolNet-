@@ -10,6 +10,7 @@ import {
   ChevronRight, CircleDollarSign, Cpu, Database, FileClock, FileText, Gauge,
   HardDrive, Landmark, Menu, Network, Radio, RefreshCw, ShieldAlert, SlidersHorizontal,
   Sparkles, Vote, Wallet, X, Zap, Settings as SettingsIcon, Wrench, ChartNoAxesCombined,
+  Globe, Leaf, Lightning, Shield, Users, BarChart, Zap as ZapIcon,
 } from 'lucide-react';
 import {
   assertWalletNetwork, checkRpcStatus, connectStellarWallet, isValidContractAddress, NETWORKS,
@@ -21,7 +22,178 @@ import { CONTRACTS, CONTRACT_BY_KEY, defaultArguments, type ContractKey, type Co
 import { loadSettings, saveSettings, type SolNetSettings } from '@/lib/config';
 
 const client = new QueryClient();
-type Outcome = { kind: 'read' | 'tx' | 'error'; text: string; hash?: string; status?: string };
+
+function LandingPage() {
+  const { network, settings, wallet } = useAppState();
+  
+  return (
+    <div className="landing-page">
+      <header className="landing-header">
+        <nav className="landing-nav">
+          <div className="landing-brand">
+            <span className="brand-mark"><Cable size={24} strokeWidth={2.5} /></span>
+            <span className="brand-name">SolNet</span>
+            <span className="brand-tagline">Autonomous DePIN Microgrid Protocol</span>
+          </div>
+          <div className="landing-nav-actions">
+            <span className="network-badge" style={{background: network ? '#3a9875' : '#bd8b45'}}>
+              {network ? `Live · Ledger ${network.latestLedger} · ${network.latencyMs}ms` : 'Network Offline'}
+            </span>
+            <Link href="/dashboard" className="button">Open Console</Link>
+          </div>
+        </nav>
+      </header>
+
+      <main className="landing-main">
+        <section className="hero">
+          <div className="hero-content">
+            <span className="hero-badge">
+              <Shield className="badge-icon" />
+              Autonomous DePIN Microgrid Protocol
+            </span>
+            <h1>Autonomous Energy Grids<br/>Powered by Stellar Soroban</h1>
+            <p className="hero-subtitle">
+              Autonomous, localized peer-to-peer energy routing with real-time micro-billing 
+              and hardware-enforced access control for community solar grids. 
+              Operates seamlessly even during internet blackouts.
+            </p>
+            <div className="hero-actions">
+              <Link href="/dashboard" className="button primary">
+                <Wallet size={18} /> Launch Console
+              </Link>
+              <Link href="/settings" className="button secondary">
+                <Settings size={18} /> Configure Network
+              </Link>
+            </div>
+            <div className="hero-stats">
+              <div className="stat">
+                <span className="stat-value">12</span>
+                <span className="stat-label">Smart Contracts</span>
+              </div>
+              <div className="stat">
+                <span className="stat-value">252</span>
+                <span className="stat-label">Tests Passing</span>
+              </div>
+              <div className="stat">
+                <span className="stat-value">12</span>
+                <span className="stat-label">WASM Artifacts</span>
+              </div>
+              <div className="stat">
+                <span className="stat-value">301</span>
+                <span className="stat-label">Total Tests</span>
+              </div>
+            </div>
+          </div>
+          <div className="hero-visual">
+            <div className="network-viz">
+              <div className="node central" />
+              <div className="node-ring">
+                {[...Array(8)].map((_, i) => (
+                  <div key={i} className="node peripheral" style={{ 
+                    transform: `rotate(${i * 45}deg) translateX(120px) rotate(-${i * 45}deg)` 
+                  }} />
+                ))}
+              </div>
+              <div className="pulse-ring" />
+              <div className="pulse-ring" style={{animationDelay: '1s'}} />
+              <div className="pulse-ring" style={{animationDelay: '2s'}} />
+            </div>
+          </div>
+        </section>
+
+        <section className="features">
+          <h2 className="section-title">How It Works</h2>
+          <div className="features-grid">
+            {[
+              { icon: Blocks, title: "12 Smart Contracts", desc: "Modular, upgradeable Soroban contracts governing every aspect of the microgrid", category: "Protocol" },
+              { icon: Cable, title: "Grid Topology", desc: "Physical node registry with BFS reachability and traversal limits", category: "Foundation" },
+              { icon: Wallet, title: "Account Ledger", desc: "Stablecoin deposits → Watt-credit conversion with 1e6 fixed-point precision", category: "Settlement" },
+              { icon: Activity, title: "Micro Billing", desc: "High-frequency meter readings with nonce replay protection", category: "Settlement" },
+              { icon: ShieldAlert, title: "Auto Disconnection", desc: "Grace-period enforcement with signed relay instructions", category: "Settlement" },
+              { icon: ZapIcon, title: "Yield Auction", desc: "Double-sided matching engine for prosumer energy trading", category: "Markets" },
+              { icon: BatteryCharging, title: "Battery Pool", desc: "Fee reserves earmarked for hardware maintenance", category: "Markets" },
+              { icon: Sparkles, title: "Community Capital", desc: "Crowdfunding with pro-rata dividend index", category: "Markets" },
+              { icon: Cpu, title: "IoT Registrar", desc: "Factory-fused device keys with versioned registrations", category: "Security" },
+              { icon: Radio, title: "Crypto Oracle", desc: "Offline telemetry batch verification with replay protection", category: "Security" },
+              { icon: HardDrive, title: "Firmware Verifier", desc: "Hash-based attestation with floor-version staleness", category: "Security" },
+              { icon: Shield, title: "Hardware Slash", desc: "Collateral seizure with burn/redistribution split", category: "Security" },
+            ].map((feature, i) => (
+              <article key={feature.title} className="feature-card" style={{animationDelay: `${i * 50}ms`}}>
+                <div className="feature-icon"><feature.icon size={24} /></div>
+                <span className="feature-category">{feature.category}</span>
+                <h3>{feature.title}</h3>
+                <p>{feature.desc}</p>
+              </article>
+            ))}
+          </div>
+        </section>
+
+        <section className="contracts-section">
+          <h2 className="section-title">Live Contracts</h2>
+          <p className="section-subtitle">All contracts deployed and verified on Stellar standalone network</p>
+          <div className="contracts-grid">
+            {[
+              { key: 'grid_topology', label: 'Grid Topology', category: 'Foundation', icon: Network },
+              { key: 'account_ledger', label: 'Account Ledger', category: 'Settlement', icon: Wallet },
+              { key: 'micro_billing', label: 'Micro Billing', category: 'Settlement', icon: Activity },
+              { key: 'delinquency_disconnector', label: 'Disconnector', category: 'Settlement', icon: ShieldAlert },
+              { key: 'yield_auction', label: 'Yield Auction', category: 'Markets', icon: ZapIcon },
+              { key: 'peak_load_adjuster', label: 'Peak Load Adjuster', category: 'Markets', icon: Gauge },
+              { key: 'battery_pool', label: 'Battery Pool', category: 'Markets', icon: BatteryCharging },
+              { key: 'community_capital', label: 'Community Capital', category: 'Markets', icon: Sparkles },
+              { key: 'iot_registrar', label: 'IoT Registrar', category: 'Security', icon: Cpu },
+              { key: 'cryptographic_oracle', label: 'Crypto Oracle', category: 'Security', icon: Radio },
+              { key: 'firmware_verifier', label: 'Firmware Verifier', category: 'Security', icon: HardDrive },
+              { key: 'hardware_slash', label: 'Hardware Slash', category: 'Security', icon: Shield },
+            ].map(contract => (
+              <article key={contract.key} className="contract-card">
+                <div className="contract-icon"><contract.icon size={20} /></div>
+                <h4>{contract.label}</h4>
+                <span className="contract-category">{contract.category}</span>
+              </article>
+            ))}
+          </div>
+        </section>
+
+        <section className="cta-section">
+          <div className="cta-content">
+            <h2>Ready to Build?</h2>
+            <p>Connect your wallet, configure the network, and start interacting with live Soroban contracts.</p>
+            <div className="cta-actions">
+              <Link href="/dashboard" className="button primary large">
+                <Wallet size={20} /> Launch Console
+              </Link>
+              <Link href="/settings" className="button secondary large">
+                <Settings size={20} /> Configure Network
+              </Link>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <footer className="landing-footer">
+        <div className="footer-grid">
+          <div className="footer-brand">
+            <span className="footer-brand-mark"><Cable size={20} strokeWidth={2.5} /></span>
+            <span className="footer-brand-name">SolNet</span>
+          </div>
+          <div className="footer-links">
+            <a href="https://github.com/Chidubemkingsley/SolNet-" target="_blank" rel="noopener noreferrer">
+              <Github size={18} /> GitHub
+            </a>
+            <a href="https://developers.stellar.org/docs/smart-contracts" target="_blank" rel="noopener noreferrer">
+              <ExternalLink size={18} /> Stellar Docs
+            </a>
+            <a href="https://soroban.stellar.org" target="_blank" rel="noopener noreferrer">
+              <Globe size={18} /> Soroban
+            </a>
+          </div>
+          <p className="footer-copyright">Built on Stellar Soroban · Autonomous DePIN Microgrid Protocol</p>
+        </div>
+      </footer>
+  </div>
+  );
+}
 interface AppState {
   settings: SolNetSettings;
   wallet: string | null;
@@ -94,7 +266,7 @@ function App() {
     <StateContext.Provider value={context}>
       <RoutedErrorBoundary>
         <Switch>
-          <Route path="/"><RedirectDashboard /></Route>
+          <Route path="/"><LandingPage /></Route>
           {PAGES.map(page => <Route key={page.path} path={page.path}><Shell page={page} menuOpen={menuOpen} setMenuOpen={setMenuOpen} walletError={walletError} setWalletError={setWalletError} updateSettings={updateSettings} /></Route>)}
           <Route component={NotFound} />
         </Switch>
