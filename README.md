@@ -349,7 +349,7 @@ Each currency is served by its own single-currency stack (no multi-token
 ledger upgrade was needed); the frontend topbar switches the settlement trio
 between USDC and EURC.
 
-Demo grid seeded on the shared topology contract (`CC7A…4GQPN`): solar array (node 1) → battery bank (node 4) → two homes (nodes 2–3); `node_count` reads 4, `neighbors(4)` reads `[1,2,3]`, `are_connected(1,2)` is true, `total_capacity` is 16700 mWh.
+Demo grid seeded on the shared topology contract (`CC7A…4GQPN`): solar array (node 1) → battery bank (node 4) → two homes (nodes 2–3), plus an isolated distribution relay (node 5, no edges); `node_count` reads 5, `neighbors(4)` reads `[1,2,3]`, `are_connected(1,2)` is true, `are_connected(5,1)` is false (proving the check isn't vacuous), `total_capacity` is 17500 mWh.
 
 Storage TTL renewal and the traversal ceiling are likewise covered by tests, including ledger-advance decay tests that confirm state survives past the minimum entry lifetime.
 
