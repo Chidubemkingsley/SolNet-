@@ -1,5 +1,6 @@
 import type { ContractKey } from "./contracts";
 import { DEPLOYED_CONTRACT_IDS } from "./deployed-contracts";
+import { DEPLOYED_CONTRACT_IDS_TESTNET_EUR } from "./deployed-contracts.testnet.eur";
 import {
   NETWORKS,
   type StellarConnectionConfig,
@@ -8,14 +9,44 @@ import {
 
 export const SETTINGS_STORAGE_KEY = "solnet.protocol.settings.v1";
 
+export type BillingCurrency = "SNUSD" | "SNEUR";
+
 export interface SolNetSettings extends StellarConnectionConfig {
   contracts: Record<ContractKey, string>;
+  currency: BillingCurrency;
 }
 
+// The three settlement contracts form one single-currency stack. Only these
+// keys follow the currency switch; the other nine contracts are shared.
+const STACK_KEYS = [
+  "account_ledger",
+  "micro_billing",
+  "delinquency_disconnector",
+] as const;
+
 // Fallback to deployed contract IDs if env vars not set. The fallback set
-// follows the selected network, so switching networks in Settings just works.
-function fallbackContracts(network: StellarNetwork): Record<ContractKey, string> {
-  return { ...(DEPLOYED_CONTRACT_IDS[network] ?? DEPLOYED_CONTRACT_IDS.standalone) };
+// follows the selected network, and the settlement stack follows the selected
+// currency, so switching either in Settings just works.
+export function defaultContractsFor(
+  network: StellarNetwork,
+  currency: BillingCurrency,
+): Record<ContractKey, string> {
+  const base = {
+    ...(DEPLOYED_CONTRACT_IDS[network] ?? DEPLOYED_CONTRACT_IDS.standalone),
+  };
+  if (network === "testnet" && currency === "SNEUR") {
+    for (const key of STACK_KEYS) {
+      base[key] = DEPLOYED_CONTRACT_IDS_TESTNET_EUR[key];
+    }
+  }
+  return base;
+}
+
+function fallbackContracts(
+  network: StellarNetwork,
+  currency: BillingCurrency,
+): Record<ContractKey, string> {
+  return defaultContractsFor(network, currency);
 }
 
 const ENV_CONTRACTS: Record<ContractKey, string | undefined> = {
@@ -35,9 +66,10 @@ const ENV_CONTRACTS: Record<ContractKey, string | undefined> = {
 
 export function getDefaultSettings(): SolNetSettings {
   const network = parseNetwork(import.meta.env.VITE_STELLAR_NETWORK);
+  const currency = parseCurrency(import.meta.env.VITE_BILLING_CURRENCY);
   const rpcUrl =
     import.meta.env.VITE_STELLAR_RPC_URL?.trim() || NETWORKS[network].defaultRpcUrl;
-  const fallbacks = fallbackContracts(network);
+  const fallbacks = fallbackContracts(network, currency);
   const contracts = Object.fromEntries(
     Object.entries(ENV_CONTRACTS).map(([key, value]) => [
       key,
@@ -48,6 +80,7 @@ export function getDefaultSettings(): SolNetSettings {
     network,
     rpcUrl,
     contracts,
+    currency,
   };
 }
 
@@ -58,15 +91,20 @@ export function loadSettings(): SolNetSettings {
     if (!stored) return defaults;
     const parsed = JSON.parse(stored) as Partial<SolNetSettings>;
     const resolvedNetwork = parseNetwork(parsed.network ?? defaults.network);
-    // Stored contract IDs belong to the network they were saved under.
-    // Applying testnet IDs to a standalone session (or vice versa) is exactly
-    // how you end up calling contracts that don't exist there.
+    const resolvedCurrency = parseCurrency(parsed.currency ?? defaults.currency);
+    // Stored contract IDs belong to the network/currency they were saved
+    // under. Applying testnet IDs to a standalone session (or vice versa) is
+    // exactly how you end up calling contracts that don't exist there.
     const storedContracts =
-      parsed.network === resolvedNetwork ? (parsed.contracts ?? {}) : {};
+      parsed.network === resolvedNetwork &&
+      (parsed.currency ?? resolvedCurrency) === resolvedCurrency
+        ? (parsed.contracts ?? {})
+        : {};
     return {
       ...defaults,
       ...parsed,
       network: resolvedNetwork,
+      currency: resolvedCurrency,
       rpcUrl:
         typeof parsed.rpcUrl === "string" && parsed.rpcUrl.trim()
           ? parsed.rpcUrl.trim()
@@ -89,4 +127,8 @@ function parseNetwork(value: unknown): StellarNetwork {
   // Default to testnet, where the live deployment lives. Other networks
   // remain one dropdown change away in Settings.
   return value === "mainnet" || value === "standalone" ? value : "testnet";
+}
+
+function parseCurrency(value: unknown): BillingCurrency {
+  return value === "SNEUR" ? "SNEUR" : "SNUSD";
 }

@@ -21,7 +21,7 @@ import {
 } from '@/lib/helper';
 import type { ISupportedWallet } from '@creit.tech/stellar-wallets-kit';
 import { CONTRACTS, CONTRACT_BY_KEY, defaultArguments, type ContractKey, type ContractMethod } from '@/lib/contracts';
-import { loadSettings, saveSettings, type SolNetSettings } from '@/lib/config';
+import { defaultContractsFor, loadSettings, saveSettings, type BillingCurrency, type SolNetSettings } from '@/lib/config';
 
 const client = new QueryClient();
 type Outcome = { kind: 'read' | 'tx' | 'error'; text: string; hash?: string; status?: string };
@@ -321,6 +321,16 @@ function Shell({ page, menuOpen, setMenuOpen, walletError, setWalletError, updat
       <header className="topbar">
         <div className="row" style={{justifyContent:'flex-start', gap:10}}><button className="mobile-menu" onClick={() => setMenuOpen(true)} aria-label="Open navigation" data-testid="button-open-navigation"><Menu size={19} /></button><span className="crumb">SolNet / <b>{page.title}</b></span></div>
         <div className="top-actions">
+          <select className="select mono" style={{minHeight:36, width:'auto'}} value={settings.currency} onChange={e => {
+            const currency = e.target.value as BillingCurrency;
+            const fresh = defaultContractsFor(settings.network, currency);
+            const contracts = { ...settings.contracts };
+            (["account_ledger", "micro_billing", "delinquency_disconnector"] as const).forEach(k => { contracts[k] = fresh[k]; });
+            updateSettings({ ...settings, currency, contracts });
+          }} aria-label="Billing currency" title="Billing currency: which settlement stack the console talks to" data-testid="select-billing-currency">
+            <option value="SNUSD">SNUSD</option>
+            <option value="SNEUR">SNEUR</option>
+          </select>
           <div className="network-pill" data-testid="status-network-health"><span className="pulse-dot" style={network ? {background:'#3a9875'} : {background:'#bd8b45'}} />{network ? `${settings.network.toUpperCase()} · ${network.latencyMs}ms` : 'RPC UNAVAILABLE'}</div>
           {wallet ? <button className="wallet-btn secondary" onClick={() => void disconnect()} data-testid="button-wallet-disconnect" title={walletName ? `Connected with ${walletName}` : undefined}><Wallet size={14} />{walletName ? `${walletName} · ` : ''}{shortenAddress(wallet)}<X size={13} /></button> :
             <button className="wallet-btn" onClick={() => void openPicker()} data-testid="button-wallet-connect"><Wallet size={14} />Connect wallet</button>}

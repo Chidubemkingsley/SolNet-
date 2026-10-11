@@ -391,7 +391,7 @@ Deployed with `NETWORK=testnet SOURCE=testnet-admin ./deploy.sh` (the deployer i
 
 Notes: testnet resets periodically wipe state — redeploy with the same command if calls start failing. The frontend resolves these IDs automatically when Testnet is selected in Settings (or via `VITE_CONTRACT_*` overrides; see `solnet-frontend/.env.example`).
 
-These addresses are also emitted per network by `deploy.sh` (`solnet-frontend/src/lib/deployed-contracts.<network>.ts`) and used as fallbacks in the frontend.
+These addresses are also emitted per network by `deploy.sh` (`solnet-frontend/src/lib/deployed-contracts.<network>.ts`) and used as fallbacks in the frontend. The euro stack is `account_ledger CC2F…4G2`, `micro_billing CCQ6…DSY`, `delinquency_disconnector CBVD…42Z`, wired to the SNEUR token; the frontend topbar switches the settlement stack between SNUSD and SNEUR (the other nine contracts are shared).
 
 ---
 
