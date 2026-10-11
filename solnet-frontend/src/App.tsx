@@ -193,6 +193,7 @@ const PAGES: Item[] = [
   { path:'/incidents', title:'Device incidents', summary:'Slash a proven offence against a posted collateral deposit.', section:'Field systems', icon:ShieldAlert, contract:'hardware_slash', method:'slash', kind:'write' },
   { path:'/developer-tools', title:'Developer tools', summary:'Run read simulations and carefully review typed contract invocations before Freighter signing.', section:'Protocol', icon:Blocks, kind:'none' },
   { path:'/settings', title:'Network settings', summary:'Configure RPC, network, and real Soroban contract IDs. Changes are stored in this browser.', section:'System', icon:SettingsIcon, kind:'none' },
+  { path:'/admin', title:'Operator admin', summary:'Grid-operator actions. Every control unlocks only for the wallet matching that contract\u2019s on-chain admin.', section:'System', icon:ShieldCheck, kind:'none' },
 ];
 
 const TYPE_OPTIONS: SorobanArgumentType[] = ['address','bool','string','symbol','bytes','bytes32','i32','u32','i64','u64','i128','u128','i256','u256','json'];
@@ -351,6 +352,7 @@ function Shell({ page, menuOpen, setMenuOpen, walletError, setWalletError, updat
         {walletWarning && <div className="notice" data-testid="status-wallet-network-warning" style={{marginBottom:14}}>{walletWarning}</div>}
         {networkError && <div className="notice neutral row" data-testid="status-rpc-error" style={{marginBottom:14}}><span>{networkError}</span><button className="button ghost" onClick={() => void refreshNetwork()} data-testid="button-rpc-retry"><RefreshCw size={13} />Retry RPC</button></div>}
         {page.path === '/settings' ? <SettingsView updateSettings={updateSettings} /> :
+          page.path === '/admin' ? <AdminView /> :
           page.path === '/developer-tools' ? <DeveloperView /> : page.path === '/audit' ? <AuditView /> :
             <OperationalView page={page} />}
       </div>
@@ -639,6 +641,123 @@ function AuditView() {
       </section>
     </div>
   </div>;
+}
+
+function AdminView() {
+  const { settings, wallet } = useAppState();
+  const [admins, setAdmins] = useState<Partial<Record<ContractKey, string>> | null>(null);
+  const [loadingAdmins, setLoadingAdmins] = useState(false);
+  useEffect(() => {
+    if (!wallet) { setAdmins(null); return; }
+    let active = true;
+    setLoadingAdmins(true);
+    Promise.all(CONTRACTS.map(async (contract) => {
+      const contractId = settings.contracts[contract.key];
+      if (!isValidContractAddress(contractId)) return [contract.key, null] as const;
+      try {
+        const value = await simulateContractRead({ config: settings, sourceAddress: wallet, contractId, method: 'admin', args: [] });
+        return [contract.key, typeof value === 'string' ? value : null] as const;
+      } catch { return [contract.key, null] as const; }
+    })).then(entries => {
+      if (!active) return;
+      setAdmins(Object.fromEntries(entries.filter(([, v]) => v !== null)));
+      setLoadingAdmins(false);
+    }).catch(() => { if (active) setLoadingAdmins(false); });
+    return () => { active = false; };
+  }, [wallet, settings]);
+  const isAdmin = (key: ContractKey) => !!wallet && !!admins && admins[key] === wallet;
+  return <div>
+    <PageHeading page={titleFor('/admin')} actions={<StatusTag tone={wallet ? 'ok' : 'warn'}>{wallet ? `SIGNED AS ${shortenAddress(wallet)}` : 'NO WALLET'}</StatusTag>} />
+    {!wallet && <div className="notice" style={{marginBottom:14}}>Connect a wallet to check operator authority. Reads below need a simulation source.</div>}
+    <section className="card" style={{marginBottom:14}}>
+      <div className="card-header"><div><h2 className="card-title">Who administers what</h2><div className="card-subtitle">Live <span className="mono">admin()</span> reads across all 12 contracts.</div></div><StatusTag tone={loadingAdmins ? '' : 'ok'}>{loadingAdmins ? 'READING…' : 'LIVE'}</StatusTag></div>
+      <div className="grid" style={{gap:9}}>
+        {CONTRACTS.map(contract => {
+          const admin = admins?.[contract.key];
+          const yours = isAdmin(contract.key);
+          return <div key={contract.key} style={{borderTop:'1px solid hsl(var(--border))',paddingTop:10}}>
+            <div className="row"><div><div className="card-title">{contract.label}</div><div className="field-help mono">{admin ? shortenAddress(admin) : 'unreadable'}</div></div><StatusTag tone={yours ? 'ok' : ''}>{yours ? 'YOU ARE ADMIN' : 'NOT YOU'}</StatusTag></div>
+          </div>;
+        })}
+      </div>
+    </section>
+    <AdminForm contractKey="iot_registrar" methodName="register_device" title="Register device" subtitle="Whitelist a meter public key. Admin-only." isAdmin={isAdmin('iot_registrar')}
+      fields={[
+        { name: 'public_key', type: 'bytes32', label: 'Device public key · 32-byte hex', placeholder: 'Enter 64 hex characters' },
+        { name: 'model', type: 'string', label: 'Model name · text', placeholder: 'e.g. SolMeter v1' },
+      ]} />
+    <AdminForm contractKey="hardware_slash" methodName="slash" title="Slash operator" subtitle="Seize a collateral deposit for a proven offence." isAdmin={isAdmin('hardware_slash')}
+      fields={[
+        { name: 'admin', type: 'address', label: 'Admin', placeholder: 'Defaults to connected wallet', fallbackWallet: true },
+        { name: 'owner', type: 'address', label: 'Owner to slash', placeholder: 'Operator address' },
+        { name: 'offence', type: 'u32', label: 'Offence code · 1 = spoofed generation, 2 = router bypass', placeholder: '1 or 2' },
+      ]} />
+    <AdminForm contractKey="account_ledger" methodName="set_token" title="Set backing token" subtitle="Point the ledger at a Stellar Asset Contract. One-way configuration." isAdmin={isAdmin('account_ledger')}
+      fields={[
+        { name: 'admin', type: 'address', label: 'Admin', placeholder: 'Defaults to connected wallet', fallbackWallet: true },
+        { name: 'token', type: 'address', label: 'Token contract ID', placeholder: 'SAC contract address' },
+      ]} />
+    <AdminForm contractKey="account_ledger" methodName="authorize_router" title="Authorize billing router" subtitle="Grant a router the capability to charge accounts." isAdmin={isAdmin('account_ledger')}
+      fields={[
+        { name: 'admin', type: 'address', label: 'Admin', placeholder: 'Defaults to connected wallet', fallbackWallet: true },
+        { name: 'router', type: 'address', label: 'Router contract ID', placeholder: 'Billing contract address' },
+      ]} />
+    <AdminForm contractKey="community_capital" methodName="accrue_yield" title="Accrue yield" subtitle="Book one time-scaled dividend period. At most once per ledger." isAdmin={isAdmin('community_capital')}
+      fields={[
+        { name: 'admin', type: 'address', label: 'Admin', placeholder: 'Defaults to connected wallet', fallbackWallet: true },
+      ]} />
+    <AdminForm contractKey="firmware_verifier" methodName="approve_firmware" title="Approve firmware" subtitle="Mark a firmware build as community-approved." isAdmin={isAdmin('firmware_verifier')}
+      fields={[
+        { name: 'admin', type: 'address', label: 'Admin', placeholder: 'Defaults to connected wallet', fallbackWallet: true },
+        { name: 'firmware_hash', type: 'bytes32', label: 'Firmware hash · 32-byte hex', placeholder: 'Enter exact hash' },
+        { name: 'version', type: 'u32', label: 'Version', placeholder: 'e.g. 2' },
+        { name: 'min_version', type: 'u32', label: 'Minimum accepted version', placeholder: 'e.g. 2' },
+      ]} />
+  </div>;
+}
+
+interface AdminField { name: string; type: SorobanArgumentType; label: string; placeholder: string; fallbackWallet?: boolean }
+
+function AdminForm({ contractKey, methodName, title, subtitle, fields, isAdmin }: { contractKey: ContractKey; methodName: string; title: string; subtitle: string; fields: AdminField[]; isAdmin: boolean }) {
+  const { settings, wallet } = useAppState();
+  const contract = CONTRACT_BY_KEY[contractKey];
+  const contractId = settings.contracts[contractKey];
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [review, setReview] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<Outcome | null>(null);
+  const set = (name: string, value: string) => setValues(current => ({ ...current, [name]: value }));
+  const resolved: ContractArgument[] = fields.map(f => ({
+    name: f.name,
+    type: f.type,
+    value: f.type === 'bool' ? false : (values[f.name] ?? '').trim() === '' && f.fallbackWallet ? (wallet ?? '') : (values[f.name] ?? ''),
+  }));
+  const incomplete = resolved.some(a => a.value === '' || (typeof a.value === 'string' && !a.value.trim()));
+  const submit = async () => {
+    if (!wallet) return;
+    setBusy(true); setReview(false); setResult(null);
+    try {
+      await verifyContractDeployment(contractId, settings);
+      const tx = await submitContractTransaction({ config: settings, sourceAddress: wallet, contractId, method: methodName, args: resolved });
+      setResult({ kind: 'tx', text: tx.status === 'SUCCESS' ? 'Confirmed on-chain.' : 'Accepted; still pending.', hash: tx.hash, status: tx.status });
+    } catch (error) { setResult({ kind: 'error', text: error instanceof Error ? error.message : 'Transaction failed.' }); }
+    finally { setBusy(false); }
+  };
+  return <section className="card" style={{marginTop:15}}>
+    <div className="card-header"><div><h2 className="card-title">{title}</h2><div className="card-subtitle mono">{contractKey}.{methodName}()</div></div><StatusTag tone={isAdmin ? 'ok' : 'warn'}>{isAdmin ? 'AUTHORIZED' : 'ADMIN ONLY'}</StatusTag></div>
+    <p className="field-help" style={{marginBottom:12}}>{subtitle} {contract?.description ?? ''}</p>
+    {!isAdmin && <div className="notice" style={{marginBottom:12}}>The connected wallet is not this contract's admin. The form is locked; the chain would reject the call.</div>}
+    {fields.map(f => <div className="field" key={f.name}><label>{f.label}</label><input className="input mono" value={values[f.name] ?? ''} onChange={e => set(f.name, e.target.value)} placeholder={f.fallbackWallet ? (wallet ? `Defaults to ${shortenAddress(wallet)}` : f.placeholder) : f.placeholder} data-testid={`input-admin-${contractKey}-${f.name}`} /></div>)}
+    {!review ? <button className="button" disabled={!wallet || !isValidContractAddress(contractId) || !isAdmin || incomplete || busy} onClick={() => setReview(true)} data-testid={`button-review-admin-${contractKey}-${methodName}`}>Review</button> :
+      <div className="notice neutral" data-testid={`panel-admin-${contractKey}-${methodName}`}>
+        <b>Confirm operator action</b><div className="divider" />
+        <div className="field-help">Contract · <span className="mono">{contractId}</span></div>
+        <div className="field-help">Method · <span className="mono">{methodName}</span></div>
+        <pre className="result-box" style={{maxHeight:150,margin:'9px 0 12px'}}>{toDisplayJson(resolved)}</pre>
+        <div className="row" style={{justifyContent:'flex-start'}}><button className="button" disabled={busy} onClick={() => void submit()} data-testid={`button-confirm-admin-${contractKey}-${methodName}`}>{busy ? 'Awaiting RPC…' : 'Confirm & sign'}</button><button className="button ghost" onClick={() => setReview(false)}>Cancel</button></div>
+      </div>}
+    {result && <div style={{marginTop:12}}>{result.kind === 'error' ? <div className="notice error" data-testid={`status-admin-${contractKey}-error`}>{result.text}</div> : <><div className="notice neutral">{result.text}</div>{result.hash && <><div className="section-kicker">Transaction hash · {result.status}</div><div className="result-box" data-testid={`text-admin-${contractKey}-hash`}>{result.hash}</div></>}</>}</div>}
+  </section>;
 }
 
 function AuxiliaryRead({contractKey,methodName,title}:{contractKey:ContractKey;methodName:string;title:string}){
