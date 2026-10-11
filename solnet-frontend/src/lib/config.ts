@@ -1,6 +1,9 @@
 import type { ContractKey } from "./contracts";
 import { DEPLOYED_CONTRACT_IDS } from "./deployed-contracts";
-import { DEPLOYED_CONTRACT_IDS_TESTNET_EUR } from "./deployed-contracts.testnet.eur";
+import {
+  isStackKey,
+  stackOverlayFor,
+} from "./deployed-contracts.testnet.stacks";
 import {
   NETWORKS,
   type StellarConnectionConfig,
@@ -9,7 +12,7 @@ import {
 
 export const SETTINGS_STORAGE_KEY = "solnet.protocol.settings.v1";
 
-export type BillingCurrency = "SNUSD" | "SNEUR";
+export type BillingCurrency = "SNUSD" | "SNEUR" | "USDC" | "EURC";
 
 export interface SolNetSettings extends StellarConnectionConfig {
   contracts: Record<ContractKey, string>;
@@ -18,11 +21,7 @@ export interface SolNetSettings extends StellarConnectionConfig {
 
 // The three settlement contracts form one single-currency stack. Only these
 // keys follow the currency switch; the other nine contracts are shared.
-const STACK_KEYS = [
-  "account_ledger",
-  "micro_billing",
-  "delinquency_disconnector",
-] as const;
+// (Key list lives in deployed-contracts.testnet.stacks.ts alongside the IDs.)
 
 // Fallback to deployed contract IDs if env vars not set. The fallback set
 // follows the selected network, and the settlement stack follows the selected
@@ -34,9 +33,14 @@ export function defaultContractsFor(
   const base = {
     ...(DEPLOYED_CONTRACT_IDS[network] ?? DEPLOYED_CONTRACT_IDS.standalone),
   };
-  if (network === "testnet" && currency === "SNEUR") {
-    for (const key of STACK_KEYS) {
-      base[key] = DEPLOYED_CONTRACT_IDS_TESTNET_EUR[key];
+  if (network === "testnet") {
+    const overlay = stackOverlayFor(currency);
+    if (overlay) {
+      for (const key of Object.keys(overlay)) {
+        if (isStackKey(key)) {
+          base[key] = overlay[key];
+        }
+      }
     }
   }
   return base;
@@ -130,5 +134,7 @@ function parseNetwork(value: unknown): StellarNetwork {
 }
 
 function parseCurrency(value: unknown): BillingCurrency {
-  return value === "SNEUR" ? "SNEUR" : "SNUSD";
+  return value === "SNEUR" || value === "USDC" || value === "EURC"
+    ? value
+    : "SNUSD";
 }

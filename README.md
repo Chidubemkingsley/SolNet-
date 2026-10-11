@@ -181,6 +181,8 @@ issuer. Distinct codes avoid any confusion with the real assets:
 |---|---|---|---|
 | **SNUSD** | USDC | `SNUSD:GAHEPUPXSVVOGY274EKIYZXYFPJORDUOAX6DCYF5KNU6IVUICTTU2J2E` | `CDA5HO4KFC6HI23DJ5RDPQQDGSOFLL3LBFWPQNHUFMQAQT3XX35KGM5J` |
 | **SNEUR** | EURC | `SNEUR:GDLFIT4PVR4P5N7X5PVK55WDYH7RGX4VN2ZA2U4Y65SGGEMTOOXYZWTF` | `CA45FX7O2MKTQIBOAQC2YQCBEK5ZBU3H7FSGRWW5BYVZUAKUW5PUXCGJ` |
+| **USDC** | USDC | `USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5` | `CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA` |
+| **EURC** | EURC | `EURC:GB3Q6QDZYTHWT7E5PVS3W7FUT5GVAFC5KSZFFLPU25GO7VTC3NM2ZTVO` | `CCUUDM434BMZMYWYDITHFXHDMIVTGGD6T2I5UKNX5BSLXLW7HVR4MCGZ` |
 
 Each ledger holds exactly one backing token, so each currency runs on its own
 ledger instance (`CBSK…MVUW` for SNUSD, `CC2F…4G2` for SNEUR). The billing and
@@ -360,9 +362,9 @@ Token-backed deposits were verified end to end against the SNUSD Stellar Asset C
 
 Euro loop on the SNEUR stack, verified end to end: deposit 60 → escrow 60 →
 record → 58 → `NotDelinquent` → record → −192 → `GracePeriod` → `Disconnect`
-at seq 86400 → 32-byte relay instruction. Both currencies are served by
-separate single-currency stacks (no multi-token ledger upgrade was needed);
-the frontend topbar switches the settlement trio between them.
+at seq 86400 → 32-byte relay instruction. Each currency is served by its own
+single-currency stack (no multi-token ledger upgrade was needed); the frontend
+topbar switches the settlement trio between SNUSD, SNEUR, USDC, and EURC.
 
 Storage TTL renewal and the traversal ceiling are likewise covered by tests, including ledger-advance decay tests that confirm state survives past the minimum entry lifetime.
 
@@ -403,7 +405,33 @@ Second settlement trio, wired to the SNEUR token. The other nine contracts above
 | `micro_billing` | `CCQ6RBXRTV4PW46PY7NWUKM4RILUL3J6INK3IG4UVLVYONGAVNT2EDSY` |
 | `delinquency_disconnector` | `CBVDIPDZZULUUIUOKC5NUNB76J2LVG4YN5PFDTFMZ3UECMNETFW6542Z` |
 
-These addresses are also emitted per network by `deploy.sh` (`solnet-frontend/src/lib/deployed-contracts.<network>.ts`) and used as fallbacks in the frontend. The topbar **SNUSD/SNEUR selector** switches the settlement trio between stacks; saved custom IDs are preserved except for the three stack keys the switcher owns, and stored IDs never leak across networks.
+These addresses are also emitted per network by `deploy.sh` (`solnet-frontend/src/lib/deployed-contracts.<network>.ts`) and used as fallbacks in the frontend.
+
+### USDC stack (testnet)
+
+Settlement trio bound to real Circle-issued testnet USDC (`USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5`, issuer `home_domain: centre.io`). The other nine contracts above are shared.
+
+| Contract | Address |
+|---|---|
+| `account_ledger` | `CDO63AUAFUFZBILM7BWR3QN6Q6VUYZSVOSXZDZ55PHAFUS7ISWNGLPLI` |
+| `micro_billing` | `CBCLTR5LH77QWXVDBKEA2L5TRR3GXYTT6GTP7AZZ72YMQ3EWXZZYILBN` |
+| `delinquency_disconnector` | `CD6MBK5SGL5K7JVW5WFVI2R5XM353LDMXVKZXCZRIKVAX6FK66TGYD35` |
+
+Verified live: token + router checks pass, plain deposits gated (`#13`), secured calls reach the real USDC SAC and fail only on funds (`#12`). Real USDC movement requires the depositor's signature — top up via the app once funded.
+
+### EURC stack (testnet)
+
+Settlement trio bound to real Circle-issued testnet EURC (`EURC:GB3Q6QDZYTHWT7E5PVS3W7FUT5GVAFC5KSZFFLPU25GO7VTC3NM2ZTVO`, issuer `home_domain: circle.com`). The other nine contracts above are shared.
+
+| Contract | Address |
+|---|---|
+| `account_ledger` | `CBEYQBMOVVON2CYM6BZGNEPHUPQ3MTWRN6KAXQUTKHTIC7W3TSYPIDDB` |
+| `micro_billing` | `CCEBP4NCOOH3H5SO77XGWV3JN7EB4IMPC7CY3SAQCUVL6Q4SJOYEUQPY` |
+| `delinquency_disconnector` | `CCDGMEK3QTW2ZQCRZY6IMXX32JDSNBD4VNY5QFIHLUGQMPAOMKG2DFOA` |
+
+Verified live: same checks as USDC — token + router confirmed, gate enforced, secured path reaches the real EURC SAC.
+
+The frontend topbar switches the settlement trio between SNUSD, SNEUR, USDC, and EURC; saved custom IDs are preserved except for the three stack keys the switcher owns, and stored IDs never leak across networks or currencies.
 
 ---
 

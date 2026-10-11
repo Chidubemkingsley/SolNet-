@@ -330,6 +330,8 @@ function Shell({ page, menuOpen, setMenuOpen, walletError, setWalletError, updat
           }} aria-label="Billing currency" title="Billing currency: which settlement stack the console talks to" data-testid="select-billing-currency">
             <option value="SNUSD">SNUSD</option>
             <option value="SNEUR">SNEUR</option>
+            <option value="USDC">USDC</option>
+            <option value="EURC">EURC</option>
           </select>
           <div className="network-pill" data-testid="status-network-health"><span className="pulse-dot" style={network ? {background:'#3a9875'} : {background:'#bd8b45'}} />{network ? `${settings.network.toUpperCase()} · ${network.latencyMs}ms` : 'RPC UNAVAILABLE'}</div>
           {wallet ? <button className="wallet-btn secondary" onClick={() => void disconnect()} data-testid="button-wallet-disconnect" title={walletName ? `Connected with ${walletName}` : undefined}><Wallet size={14} />{walletName ? `${walletName} · ` : ''}{shortenAddress(wallet)}<X size={13} /></button> :
