@@ -173,13 +173,19 @@ stellar contract invoke --id <delinquency_disconnector> --source testnet-admin -
 ```
 
 For token-backed deposits, point the ledger at a Stellar Asset Contract. The demo
-uses **SNUSD**, a test stablecoin issued by this project
-(`SNUSD:GAHEPUPXSVVOGY274EKIYZXYFPJORDUOAX6DCYF5KNU6IVUICTTU2J2E`, SAC
-`CDA5HO4KFC6HI23DJ5RDPQQDGSOFLL3LBFWPQNHUFMQAQT3XX35KGM5J`) — testnet has no
-USDC/EURC issuer we control, and pointing at a stranger's test token would mean
-trusting their issuer. A distinct code avoids any confusion with real USDC.
-(A euro sibling would follow the identical steps; each ledger holds one backing
-token, so live dual-currency means a second ledger instance.)
+uses two project-issued test stablecoins — testnet has no USDC/EURC issuer we
+control, and pointing at a stranger's test token would mean trusting their
+issuer. Distinct codes avoid any confusion with the real assets:
+
+| Demo asset | Stands in for | Asset | SAC |
+|---|---|---|---|
+| **SNUSD** | USDC | `SNUSD:GAHEPUPXSVVOGY274EKIYZXYFPJORDUOAX6DCYF5KNU6IVUICTTU2J2E` | `CDA5HO4KFC6HI23DJ5RDPQQDGSOFLL3LBFWPQNHUFMQAQT3XX35KGM5J` |
+| **SNEUR** | EURC | `SNEUR:GDLFIT4PVR4P5N7X5PVK55WDYH7RGX4VN2ZA2U4Y65SGGEMTOOXYZWTF` | `CA45FX7O2MKTQIBOAQC2YQCBEK5ZBU3H7FSGRWW5BYVZUAKUW5PUXCGJ` |
+
+Each ledger holds exactly one backing token, so each currency runs on its own
+ledger instance (`CBSK…MVUW` for SNUSD, `CC2F…4G2` for SNEUR). The billing and
+disconnection layer is currently wired to the SNUSD ledger only — see the
+dual-currency note under Verified On-Chain.
 
 ```bash
 stellar contract invoke --id <account_ledger> --source testnet-admin --network testnet \
@@ -348,6 +354,13 @@ Token-backed deposits were verified end to end against the SNUSD Stellar Asset C
 | `deposit_secured` 100 SNUSD | 100 SNUSD moved into ledger escrow, 100 Watt-credits minted |
 | Billing debit on SNUSD ledger | charge 2, credits 100 → 98 |
 | `withdraw_secured` 48 SNUSD | 48 SNUSD returned, escrow holds 52, credits read 52 |
+| SNEUR round trip (`CC2F…4G2`) | deposit 200 → escrow 200 / admin 4800 / watts 200; full withdraw → escrow 0 / admin 5000 |
+
+Dual-currency status: both stablecoins exist as live test assets with verified
+escrow round trips, but billing (`micro_billing`) and disconnection wire to a
+single ledger — today the SNUSD one. Serving both currencies end to end needs
+either a second billing stack pointed at the SNEUR ledger plus a currency
+selector in the frontend, or a contract upgrade to multi-token backing.
 
 Storage TTL renewal and the traversal ceiling are likewise covered by tests, including ledger-advance decay tests that confirm state survives past the minimum entry lifetime.
 
