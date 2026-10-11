@@ -20,6 +20,7 @@ import {
   type SorobanArgumentType,
 } from '@/lib/helper';
 import type { ISupportedWallet } from '@creit.tech/stellar-wallets-kit';
+import { Keypair } from '@stellar/stellar-sdk';
 import { CONTRACTS, CONTRACT_BY_KEY, defaultArguments, type ContractKey, type ContractMethod } from '@/lib/contracts';
 import { defaultContractsFor, loadSettings, saveSettings, type BillingCurrency, type SolNetSettings } from '@/lib/config';
 
@@ -387,6 +388,15 @@ function OperationalView({ page }: { page: Item }) {
   const [entriesHex, setEntriesHex] = useState('');
   const [digestHex, setDigestHex] = useState('');
   const [offence, setOffence] = useState('');
+  const [genSecret, setGenSecret] = useState<string | null>(null);
+  const generateDeviceKey = () => {
+    // Demo stand-in for the factory: fresh ed25519 pair, public half goes
+    // straight into the form, secret shown once for the operator to keep.
+    const pair = Keypair.random();
+    const hex = Array.from(pair.rawPublicKey(), byte => byte.toString(16).padStart(2, '0')).join('');
+    setDeviceId(hex);
+    setGenSecret(pair.secret());
+  };
   useEffect(() => {
     // The assessment needs a "now" for the grace-window math. Default it to
     // the latest ledger this app has seen; the user can still override it.
@@ -542,6 +552,11 @@ function OperationalView({ page }: { page: Item }) {
         {(page.path === '/payments' || page.path === '/withdraw') && <TextField label={page.path === '/payments' ? 'Deposit amount · token units (moves real tokens)' : 'Credits to burn · releases backing tokens'} value={amount} onChange={setAmount} placeholder="Enter integer amount" testid="input-amount" />}
         {page.path === '/market' && <><TextField label="Auction ID" value={auctionId} onChange={setAuctionId} placeholder="Enter on-chain auction number" testid="input-auction-id" /><TextField label="Bid price per milli-watt-hour · integer" value={hash} onChange={setHash} placeholder="Enter integer price" testid="input-max-price" /></>}
         {(page.path === '/firmware' || page.path === '/devices') && <TextField label="Device public key · 32-byte hex" value={deviceId} onChange={setDeviceId} placeholder="Enter device public key hex" testid="input-device-id" />}
+        {page.path === '/devices' && <div style={{marginBottom:14}}>
+          <button className="button secondary" onClick={generateDeviceKey} data-testid="button-generate-device-key">Generate demo device key</button>
+          <div className="field-help" style={{marginTop:6}}>Stands in for the factory step: creates a fresh keypair and fills the public key above. In production this comes from the manufacturer manifest.</div>
+          {genSecret && <><div className="section-kicker">Operator secret · save now, shown once</div><div className="result-box" data-testid="text-device-secret">{genSecret}</div><div className="field-help" style={{marginTop:6}}>The meter needs this secret to sign. It is never stored or transmitted.</div></>}
+        </div>}
         {page.path === '/devices' && <TextField label="Model name · text" value={hash} onChange={setHash} placeholder="e.g. SolMeter v1" testid="input-model-bytes" />}
         {page.path === '/firmware' && <TextField label="Firmware hash · 32-byte hex" value={hash} onChange={setHash} placeholder="Enter exact firmware hash" testid="input-evidence-hash" />}
         {page.path === '/offline-ingestion' && <><TextField label="Batch ID · 32-byte hex" value={batchId} onChange={setBatchId} placeholder="Enter batch identifier hex" testid="input-batch-id" /><TextField label="Entries · hex-encoded bytes" value={entriesHex} onChange={setEntriesHex} placeholder="Enter telemetry entries as hex" testid="input-entries-hex" /><TextField label="Digest · 32-byte hex" value={digestHex} onChange={setDigestHex} placeholder="Enter batch digest hex" testid="input-digest-hex" /></>}
