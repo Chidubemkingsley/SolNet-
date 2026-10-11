@@ -394,6 +394,26 @@ function OperationalView({ page }: { page: Item }) {
   const [readResult, setReadResult] = useState<Outcome | null>(null);
   const [busy, setBusy] = useState(false);
   const [review, setReview] = useState(false);
+  const [ledgerBalance, setLedgerBalance] = useState<string | null>(null);
+  useEffect(() => {
+    // Meters shows consumption debt, which confuses depositors: show the
+    // ledger balance next to it so deposits and consumption read as one story.
+    if (page.path !== '/meters') return;
+    const acct = account || wallet || '';
+    const ledgerId = settings.contracts.account_ledger;
+    if (!acct || !isValidContractAddress(ledgerId)) { setLedgerBalance(null); return; }
+    let active = true;
+    simulateContractRead({
+      config: settings,
+      sourceAddress: wallet || acct,
+      contractId: ledgerId,
+      method: 'watt_balance',
+      args: [{ name: 'account', type: 'address' as const, value: acct }],
+    })
+      .then(value => { if (active) setLedgerBalance(toDisplayJson(value)); })
+      .catch(() => { if (active) setLedgerBalance(null); });
+    return () => { active = false; };
+  }, [page.path, page.contract, account, wallet, settings]);
   const contract = page.contract ? CONTRACT_BY_KEY[page.contract] : undefined;
   const method = contract?.methods.find(entry => entry.name === page.method);
   const contractId = page.contract ? settings.contracts[page.contract] : '';
@@ -472,7 +492,7 @@ function OperationalView({ page }: { page: Item }) {
         <div className="card-header"><div><h2 className="card-title">Live result</h2><div className="card-subtitle">Only values returned by RPC appear here.</div></div><StatusTag tone={readResult?.kind === 'read' || readResult?.kind === 'tx' ? 'ok' : readResult?.kind === 'error' ? 'error' : ''}>{readResult ? readResult.kind === 'error' ? 'RPC ERROR' : readResult.kind === 'tx' ? readResult.status ?? 'SUBMITTED' : 'LIVE RESULT' : 'NO READ YET'}</StatusTag></div>
         {busy ? <div className="skeleton-stack" data-testid="loading-contract-result"><div className="skeleton-line"/><div className="skeleton-line"/><div className="skeleton-line"/></div> : readResult ? readResult.kind === 'error' ? <div className="notice error" data-testid="status-operation-error">{readResult.text}</div> : readResult.kind === 'tx' ? <div><div className="notice neutral" data-testid="status-transaction-result">{readResult.text}</div><div className="section-kicker">Transaction hash</div><div className="result-box" data-testid="text-transaction-hash">{readResult.hash}</div><div className="section-kicker">RPC status</div><span className={`status ${readResult.status === 'SUCCESS' ? 'ok' : 'warn'}`} data-testid="status-transaction-state">{readResult.status}</span></div> : <pre className="result-box" data-testid="data-contract-read">{readResult.text}</pre> :
           <EmptyState title="No live result available">Read a configured, deployed contract to populate this panel. No sample balances, events, or telemetry are displayed.</EmptyState>}
-        {page.path === '/meters' && <div className="section-kicker">Meter history</div>}
+        {page.path === '/meters' && <><div className="section-kicker">Deposited balance · consumption draws from this</div><div className="result-box" data-testid="data-ledger-balance">{ledgerBalance ?? '—'}</div><div className="section-kicker">Meter history</div></>}
         {page.path === '/audit' && <div className="section-kicker">Accounting proof</div>}
         {page.path === '/batteries' && <div className="section-kicker">Reserve and health data</div>}
         {page.path === '/topology' && <div className="section-kicker">Network node data</div>}
