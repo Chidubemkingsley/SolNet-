@@ -400,6 +400,30 @@ function OperationalView({ page }: { page: Item }) {
   const [readResult, setReadResult] = useState<Outcome | null>(null);
   const [busy, setBusy] = useState(false);
   const [review, setReview] = useState(false);
+  const [listings, setListings] = useState<Array<{ id: number; seller: string; energy: string; minPrice: string; cleared: boolean; cancelled: boolean; bids: number }> | null>(null);
+  const [browsing, setBrowsing] = useState(false);
+  const browseAuctions = async () => {
+    // Auction IDs are dense from 0, so probe upward until the first miss.
+    // A network blip also ends the scan; Refresh re-runs it.
+    if (!wallet || !isValidContractAddress(contractId)) return;
+    setBrowsing(true);
+    try {
+      const found: NonNullable<typeof listings> = [];
+      for (let id = 0; id < 25; id++) {
+        let a: any;
+        try {
+          a = await simulateContractRead({ config: settings, sourceAddress: wallet, contractId, method: 'auction', args: [{ name: 'auction_id', type: 'u64' as const, value: String(id) }] });
+        } catch { break; }
+        let bids = 0;
+        try {
+          const c = await simulateContractRead({ config: settings, sourceAddress: wallet, contractId, method: 'bid_count', args: [{ name: 'auction_id', type: 'u64' as const, value: String(id) }] });
+          bids = Number(c);
+        } catch { bids = 0; }
+        found.push({ id, seller: String(a?.seller ?? ''), energy: String(a?.energy_mwh ?? a?.energy ?? ''), minPrice: String(a?.min_price ?? a?.minPrice ?? ''), cleared: !!a?.cleared, cancelled: !!a?.cancelled, bids });
+      }
+      setListings(found);
+    } finally { setBrowsing(false); }
+  };
   const [ledgerBalance, setLedgerBalance] = useState<string | null>(null);
   useEffect(() => {
     // Meters shows consumption debt, which confuses depositors: show the
@@ -508,6 +532,15 @@ function OperationalView({ page }: { page: Item }) {
     {page.path === '/batteries' && <AuxiliaryRead contractKey="battery_pool" methodName="available" title="Available reserves" />}
     {page.path === '/payments' && <div className="section-kicker">Deposit flow · tokens move into ledger escrow</div>}
     {page.path === '/withdraw' && <div className="section-kicker">Withdraw flow · escrowed tokens return to you</div>}
+    {page.path === '/market' && <section className="card" style={{marginTop:15}}>
+      <div className="card-header"><div><h2 className="card-title">Open listings</h2><div className="card-subtitle">Probed live from auction 0 upward; stops at the first missing ID.</div></div><button className="button secondary" disabled={!wallet || !isValidContractAddress(contractId) || browsing} onClick={() => void browseAuctions()} data-testid="button-browse-auctions"><RefreshCw size={13}/>{browsing ? 'Scanning…' : listings ? 'Rescan' : 'Browse listings'}</button></div>
+      {!wallet && <div className="field-help">Connect a wallet to use as the simulation source.</div>}
+      {listings && (listings.length === 0 ? <EmptyState title="No listings found">No auctions exist on this contract yet. Create one from Developer tools.</EmptyState> :
+        <div className="grid" style={{gap:9}}>{listings.map(item => <div key={item.id} style={{borderTop:'1px solid hsl(var(--border))',paddingTop:10}}>
+          <div className="row"><div><div className="card-title">Auction #{item.id} · {item.energy} mWh @ min {item.minPrice}</div><div className="field-help mono">seller {item.seller ? shortenAddress(item.seller) : '—'} · {item.bids} bid{item.bids === 1 ? '' : 's'}</div></div><StatusTag tone={item.cancelled ? 'error' : item.cleared ? 'warn' : 'ok'}>{item.cancelled ? 'CANCELLED' : item.cleared ? 'CLEARED' : 'OPEN'}</StatusTag></div>
+          <div className="row" style={{marginTop:6}}><span className="field-help">Bidding fills the whole remaining lot at your price.</span>{!item.cleared && !item.cancelled && <button className="button ghost" style={{minHeight:29,padding:'0 8px',fontSize:9}} onClick={() => setAuctionId(String(item.id))} data-testid={`button-use-auction-${item.id}`}>Use this ID</button>}</div>
+        </div>)}</div>)}
+    </section>}
     {page.path === '/campaigns' && <div className="section-kicker">Funding opportunities</div>}
     {page.path === '/incidents' && <div className="section-kicker">Investigation record</div>}
   </div>;
