@@ -353,6 +353,8 @@ Demo grid seeded on the shared topology contract (`CC7A…4GQPN`): solar array (
 
 Demo funds seeded (all accounting-only, no tokens moved): 1000 contributed to the battery pool (`total_reserve`/`available` read 1000), 5000 invested in the community fund (`total_capital` reads 5000, 5000 shares to testnet-admin). Per-account reads (`shares_of`, balances) are 0 until that account itself transacts — an empty read is correct, not a bug.
 
+Demo firmware approved (`edf8a2…1190d` = SHA-256 of `"SolNet demo firmware v1"`, version 1, floor 1): `verify_device` with the demo meter key returns `Approved`; any unknown hash returns `Unapproved` — proving the check discriminates rather than waving everything through.
+
 Storage TTL renewal and the traversal ceiling are likewise covered by tests, including ledger-advance decay tests that confirm state survives past the minimum entry lifetime.
 
 **Important caveat**: testnet resets periodically wipe all deployed state. If previously working calls start failing, redeploy with `NETWORK=testnet SOURCE=testnet-admin ./deploy.sh` (plus init + wire) rather than debugging the contracts.
