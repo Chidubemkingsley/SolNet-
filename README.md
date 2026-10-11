@@ -172,11 +172,29 @@ stellar contract invoke --id <delinquency_disconnector> --source testnet-admin -
   -- wire --admin <ADMIN> --ledger <account_ledger>
 ```
 
-For token-backed deposits, point the ledger at a Stellar Asset Contract (XLM on testnet: `CDLZFC3SYJYDZT7K67VZ96T9E7J6GDKMGBGPB4NQIUQ5Q5L`):
+For token-backed deposits, point the ledger at a Stellar Asset Contract. The demo
+uses **SNUSD**, a test stablecoin issued by this project
+(`SNUSD:GAHEPUPXSVVOGY274EKIYZXYFPJORDUOAX6DCYF5KNU6IVUICTTU2J2E`, SAC
+`CDA5HO4KFC6HI23DJ5RDPQQDGSOFLL3LBFWPQNHUFMQAQT3XX35KGM5J`) — testnet has no
+USDC/EURC issuer we control, and pointing at a stranger's test token would mean
+trusting their issuer. A distinct code avoids any confusion with real USDC.
+(A euro sibling would follow the identical steps; each ledger holds one backing
+token, so live dual-currency means a second ledger instance.)
 
 ```bash
 stellar contract invoke --id <account_ledger> --source testnet-admin --network testnet \
-  -- set_token --admin <ADMIN> --token <SAC_ADDRESS>
+  -- set_token --admin <ADMIN> --token CDA5HO4KFC6HI23DJ5RDPQQDGSOFLL3LBFWPQNHUFMQAQT3XX35KGM5J
+```
+
+To hold SNUSD, an account first needs a trustline, then the issuer mints to it:
+
+```bash
+stellar tx new change-trust --source-account <USER> \
+  --line SNUSD:GAHEPUPXSVVOGY274EKIYZXYFPJORDUOAX6DCYF5KNU6IVUICTTU2J2E \
+  --network testnet
+stellar contract invoke --id CDA5HO4KFC6HI23DJ5RDPQQDGSOFLL3LBFWPQNHUFMQAQT3XX35KGM5J \
+  --source snusd-issuer --network testnet \
+  -- mint --to <USER> --amount <AMOUNT>
 ```
 
 Without this, `deposit_secured`/`withdraw_secured` fail with `TokenNotSet`; the plain `deposit`/`withdraw` pair keeps working but moves no tokens. Note that redeploying the ledger mints a new contract ID, so `authorize_router` and both `wire` calls must be re-run against it.
@@ -323,13 +341,13 @@ The consumption loop was exercised end to end on testnet, not just the mock ledg
 | `assess` at seq 86400 | `Disconnect` |
 | `issue_disconnect` | 32-byte relay instruction emitted |
 
-Token-backed deposits were verified separately against the XLM Stellar Asset Contract on testnet:
+Token-backed deposits were verified end to end against the SNUSD Stellar Asset Contract on testnet (XLM was used only as an interim stand-in while the issuer was set up):
 
 | Step | Result |
 |---|---|
-| `deposit_secured` 50 | 50 XLM moved into ledger escrow, 50 Watt-credits minted |
-| `withdraw_secured` 20 | 20 XLM returned, escrow holds 30, credits read 30 |
-| Full deposit → withdraw round trip | user balance restored exactly, escrow reads 0/0 |
+| `deposit_secured` 100 SNUSD | 100 SNUSD moved into ledger escrow, 100 Watt-credits minted |
+| Billing debit on SNUSD ledger | charge 2, credits 100 → 98 |
+| `withdraw_secured` 48 SNUSD | 48 SNUSD returned, escrow holds 52, credits read 52 |
 
 Storage TTL renewal and the traversal ceiling are likewise covered by tests, including ledger-advance decay tests that confirm state survives past the minimum entry lifetime.
 
