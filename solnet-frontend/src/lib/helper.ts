@@ -69,7 +69,8 @@ export type SorobanArgumentType =
   | "u128"
   | "i256"
   | "u256"
-  | "json";
+  | "json"
+  | "telemetry";
 
 export interface NetworkStatus {
   network: StellarNetwork;
@@ -376,6 +377,83 @@ export async function assertWalletNetwork(
   }
 }
 
+export interface TelemetryRow {
+  node_id: number;
+  milli_wh: string;
+  recorded_at: number;
+}
+
+function scSymbol(name: string) {
+  return nativeToScVal(name, { type: "symbol" });
+}
+
+/// Encodes oracle telemetry rows exactly as the contract's `TelemetryEntry`
+/// struct layout demands: one `ScMap` per entry with symbol keys, inside an
+/// outer `ScVec`. Struct field order follows declaration order
+/// (node_id, milli_wh, recorded_at). Verified against the derive macro in
+/// soroban-sdk, which serializes contracttype structs as maps — *not* vecs,
+/// which is the easy mistake here.
+export function encodeTelemetryEntries(raw: unknown): xdr.ScVal {
+  let rows: unknown;
+  if (typeof raw === "string") {
+    try {
+      rows = JSON.parse(raw);
+    } catch {
+      throw new Error(`entries must be a JSON array of telemetry rows.`);
+    }
+  } else {
+    rows = raw;
+  }
+  if (!Array.isArray(rows) || rows.length === 0) {
+    throw new Error(`entries must be a non-empty JSON array.`);
+  }
+  const entryVals = rows.map((row, index) => {
+    if (typeof row !== "object" || row === null) {
+      throw new Error(`entries[${index}] must be an object.`);
+    }
+    const record = row as Record<string, unknown>;
+    const nodeId = Number(record.node_id);
+    const recordedAt = Number(record.recorded_at);
+    if (!Number.isInteger(nodeId) || nodeId < 0) {
+      throw new Error(`entries[${index}].node_id must be a non-negative whole number.`);
+    }
+    if (typeof record.milli_wh !== "string" && typeof record.milli_wh !== "number") {
+      throw new Error(`entries[${index}].milli_wh must be an integer, decimal string preferred.`);
+    }
+    if (!/^-?\d+$/.test(String(record.milli_wh))) {
+      throw new Error(`entries[${index}].milli_wh must be an integer written in decimal.`);
+    }
+    if (!Number.isInteger(recordedAt) || recordedAt < 0) {
+      throw new Error(`entries[${index}].recorded_at must be a non-negative whole number.`);
+    }
+    // ScMap keys must be byte-sorted or the host's map.validate() rejects
+    // the whole argument ("failed to convert ScVal to host value").
+    // Sorted byte order: milli_wh < node_id < recorded_at.
+    const entries: Array<{ name: string; val: unknown }> = [
+      { name: "milli_wh", val: nativeToScVal(BigInt(String(record.milli_wh)), { type: "i128" }) },
+      { name: "node_id", val: nativeToScVal(nodeId, { type: "u32" }) },
+      { name: "recorded_at", val: nativeToScVal(recordedAt, { type: "u64" }) },
+    ];
+    return xdr.ScVal.scvMap(
+      entries.map(
+        ({ name, val }) => new xdr.ScMapEntry({ key: scSymbol(name), val }),
+      ),
+    );
+  });
+  return xdr.ScVal.scvVec(entryVals);
+}
+
+export function bytesToHex(value: unknown): string {
+  const bytes =
+    value instanceof Uint8Array
+      ? value
+      : typeof value === "string" && /^(?:[0-9a-f]{2})+$/i.test(value)
+        ? Uint8Array.from(value.match(/.{2}/g)!.map((byte) => parseInt(byte, 16)))
+        : null;
+  if (!bytes) throw new Error("Expected bytes for hex conversion.");
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
 function encodeArgument(argument: ContractArgument) {
   const raw = argument.value;
   switch (argument.type) {
@@ -420,6 +498,9 @@ function encodeArgument(argument: ContractArgument) {
       } catch {
         throw new Error(`${argument.name} must contain valid JSON.`);
       }
+    }
+    case "telemetry": {
+      return encodeTelemetryEntries(raw);
     }
     case "symbol":
       return nativeToScVal(String(raw), { type: "symbol" });

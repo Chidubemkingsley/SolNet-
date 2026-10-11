@@ -211,8 +211,8 @@ export const CONTRACTS: ContractDefinition[] = [
     methods: [
       method("init", "write", [address("admin")]),
       method("admin", "read"),
-      method("compute_digest", "read", [bytes("entries")]),
-      method("submit_batch", "write", [address("submitter"), bytes32("batch_id"), bytes("entries"), bytes32("digest")]),
+      method("compute_digest", "read", [{ name: "entries", type: "telemetry" as const }]),
+      method("submit_batch", "write", [address("submitter"), bytes32("batch_id"), { name: "entries", type: "telemetry" as const }, bytes32("digest")]),
       method("settle", "write", [address("admin"), bytes32("batch_id")]),
       method("is_settled", "read", [bytes32("batch_id")]),
       method("batch", "read", [bytes32("batch_id")]),

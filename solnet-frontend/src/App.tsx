@@ -16,7 +16,7 @@ import {
 import {
   assertWalletNetwork, checkRpcStatus, connectStellarWallet, disconnectStellarWallet, isValidContractAddress, NETWORKS,
   getNetworkPassphrase, listWallets, readConnectedWallet, readStoredWallet, shortenAddress, simulateContractRead, submitContractTransaction,
-  fetchContractEvents, toDisplayJson, verifyContractDeployment, stellarAddressToRawHex, type ConnectedWallet, type ContractArgument, type NetworkStatus,
+  fetchContractEvents, toDisplayJson, verifyContractDeployment, stellarAddressToRawHex, bytesToHex, type ConnectedWallet, type ContractArgument, type NetworkStatus,
   type SorobanArgumentType,
 } from '@/lib/helper';
 import type { ISupportedWallet } from '@creit.tech/stellar-wallets-kit';
@@ -385,8 +385,26 @@ function OperationalView({ page }: { page: Item }) {
   const [seq, setSeq] = useState('');
   const [auctionId, setAuctionId] = useState('');
   const [batchId, setBatchId] = useState('');
-  const [entriesHex, setEntriesHex] = useState('');
+  const [entriesJson, setEntriesJson] = useState('');
   const [digestHex, setDigestHex] = useState('');
+  const [digestBusy, setDigestBusy] = useState(false);
+  const [digestError, setDigestError] = useState('');
+  const randomizeBatchId = () => {
+    const bytes = new Uint8Array(32);
+    crypto.getRandomValues(bytes);
+    setBatchId(Array.from(bytes, b => b.toString(16).padStart(2, '0')).join(''));
+  };
+  const computeBatchDigest = async (oracleId: string, source: string) => {
+    setDigestBusy(true); setDigestError('');
+    try {
+      const value = await simulateContractRead({
+        config: settings, sourceAddress: source, contractId: oracleId, method: 'compute_digest',
+        args: [{ name: 'entries', type: 'telemetry' as const, value: entriesJson }],
+      });
+      setDigestHex(bytesToHex(value));
+    } catch (error) { setDigestError(error instanceof Error ? error.message : 'Digest computation failed.'); }
+    finally { setDigestBusy(false); }
+  };
   const [offence, setOffence] = useState('');
   const [genSecret, setGenSecret] = useState<string | null>(null);
   const [bulkInput, setBulkInput] = useState('');
@@ -554,10 +572,10 @@ function OperationalView({ page }: { page: Item }) {
     if (page.path === '/market') return [{name:'buyer',type:'address' as const,value:account || wallet || ''},{name:'auction_id',type:'u64' as const,value:auctionId},{name:'price',type:'i128' as const,value:hash}];
     if (page.path === '/firmware') return [{name:'device_key',type:'bytes32' as const,value:deviceId},{name:'firmware_hash',type:'bytes32' as const,value:hash}];
     if (page.path === '/devices') return [{name:'public_key',type:'bytes32' as const,value:deviceId},{name:'model',type:'string' as const,value:hash}];
-    if (page.path === '/offline-ingestion') return [{name:'submitter',type:'address' as const,value:account || wallet || ''},{name:'batch_id',type:'bytes32' as const,value:batchId},{name:'entries',type:'bytes' as const,value:entriesHex},{name:'digest',type:'bytes32' as const,value:digestHex}];
+    if (page.path === '/offline-ingestion') return [{name:'submitter',type:'address' as const,value:account || wallet || ''},{name:'batch_id',type:'bytes32' as const,value:batchId},{name:'entries',type:'telemetry' as const,value:entriesJson},{name:'digest',type:'bytes32' as const,value:digestHex}];
     if (page.path === '/incidents') return [{name:'admin',type:'address' as const,value:wallet || ''},{name:'owner',type:'address' as const,value:account},{name:'offence',type:'u32' as const,value:offence}];
     return defaultArguments(method);
-  }, [method, page.path, account, wallet, amount, meterId, hash, deviceId, proposalId, support, seq, auctionId, batchId, entriesHex, digestHex, offence]);
+  }, [method, page.path, account, wallet, amount, meterId, hash, deviceId, proposalId, support, seq, auctionId, batchId, entriesJson, digestHex, offence]);
   const incomplete = args.some(arg => arg.value === '' || (typeof arg.value === 'string' && !arg.value.trim()));
   const canRead = !!method && method.access === 'read' && !!wallet && isValidContractAddress(contractId) && !incomplete;
   const canWrite = !!method && method.access === 'write' && !!wallet && isValidContractAddress(contractId) && !incomplete;
@@ -606,7 +624,12 @@ function OperationalView({ page }: { page: Item }) {
         </div>}
         {page.path === '/devices' && <TextField label="Model name · text" value={hash} onChange={setHash} placeholder="e.g. SolMeter v1" testid="input-model-bytes" />}
         {page.path === '/firmware' && <TextField label="Firmware hash · 32-byte hex" value={hash} onChange={setHash} placeholder="Enter exact firmware hash" testid="input-evidence-hash" />}
-        {page.path === '/offline-ingestion' && <><TextField label="Batch ID · 32-byte hex" value={batchId} onChange={setBatchId} placeholder="Enter batch identifier hex" testid="input-batch-id" /><TextField label="Entries · hex-encoded bytes" value={entriesHex} onChange={setEntriesHex} placeholder="Enter telemetry entries as hex" testid="input-entries-hex" /><TextField label="Digest · 32-byte hex" value={digestHex} onChange={setDigestHex} placeholder="Enter batch digest hex" testid="input-digest-hex" /></>}
+        {page.path === '/offline-ingestion' && <>
+          <div className="row" style={{justifyContent:'flex-start',gap:8,marginBottom:14}}><TextField label="Batch ID · 32-byte hex" value={batchId} onChange={setBatchId} placeholder="Enter batch identifier hex" testid="input-batch-id" /><button className="button ghost" style={{marginTop:18,whiteSpace:'nowrap'}} onClick={randomizeBatchId} data-testid="button-random-batch">Randomize</button></div>
+          <div className="field"><label>Entries · JSON array of readings</label><textarea className="textarea mono" value={entriesJson} onChange={e => setEntriesJson(e.target.value)} placeholder='[{"node_id":1,"milli_wh":"250","recorded_at":1700000000}]' rows={4} data-testid="input-entries-json" /><div className="field-help">Each row needs node_id, milli_wh (decimal string) and recorded_at. Encoded as structs on submit — never as raw bytes.</div></div>
+          <div className="row" style={{justifyContent:'flex-start',gap:8,marginBottom:14}}><div style={{flex:1}}><TextField label="Digest · 32-byte hex" value={digestHex} onChange={setDigestHex} placeholder="Computed from the entries above" testid="input-digest-hex" /></div><button className="button secondary" style={{marginTop:18,whiteSpace:'nowrap'}} disabled={!wallet || !isValidContractAddress(contractId) || digestBusy || !entriesJson.trim()} onClick={() => void computeBatchDigest(contractId, wallet!)} data-testid="button-compute-digest">{digestBusy ? 'Computing…' : 'Compute digest'}</button></div>
+          {digestError && <div className="notice error" style={{marginBottom:12}} data-testid="status-digest-error">{digestError}</div>}
+        </>}
         {page.path === '/incidents' && <><AddressField label="Owner address" value={account} onChange={setAccount} fallback={wallet} testid="input-owner-address" /><TextField label="Offence code · 1 = spoofed generation, 2 = router bypass" value={offence} onChange={setOffence} placeholder="Enter offence code" testid="input-offence" /></>}
         {page.kind === 'read' && <button className="button" disabled={!canRead || busy} onClick={() => void runRead()} data-testid="button-read-contract"><RefreshCw size={13} />{busy ? 'Reading…' : 'Read live contract'}</button>}
         {page.kind === 'write' && <div>
