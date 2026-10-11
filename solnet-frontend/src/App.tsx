@@ -645,6 +645,7 @@ function OperationalView({ page }: { page: Item }) {
         </div>}
         {page.path === '/devices' && <TextField label="Model name · text" value={hash} onChange={setHash} placeholder="e.g. SolMeter v1" testid="input-model-bytes" />}
         {page.path === '/firmware' && <TextField label="Firmware hash · 32-byte hex" value={hash} onChange={setHash} placeholder="Enter exact firmware hash" testid="input-evidence-hash" />}
+        {page.path === '/firmware' && <div style={{marginBottom:14}}><button className="button ghost" disabled={!wallet} onClick={useConnectedWalletAsDevice} data-testid="button-use-wallet-as-device-key">Use my wallet's key</button><div className="field-help" style={{marginTop:6}}>Fills your wallet's raw key — your real key, not a meter's. The verdict judges only the firmware hash; the key is echoed back. A real meter key comes from the manufacturer manifest.</div></div>}
         {page.path === '/firmware' && <div style={{marginBottom:14}}>
           <label className="button ghost" style={{cursor:'pointer',display:'inline-block'}} data-testid="button-hash-firmware-file">{hashBusy ? 'Hashing…' : 'Hash a firmware file'}<input type="file" hidden onChange={e => { void hashFirmwareFile(e.target.files?.[0]); e.target.value = ''; }} /></label>
           <div className="field-help" style={{marginTop:6}}>{firmwareFileName ? `SHA-256 of ${firmwareFileName}, computed locally — the file never leaves this machine.` : 'No file, no hash: paste a manufacturer-published hash, or hash the binary yourself here.'}</div>
