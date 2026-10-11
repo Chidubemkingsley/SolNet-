@@ -86,8 +86,7 @@ export function saveSettings(settings: SolNetSettings): void {
 }
 
 function parseNetwork(value: unknown): StellarNetwork {
-  // Default to standalone: this repo's entire deployment story (deploy.sh,
-  // the baked-in contract IDs, the README) targets the local node. Testnet
-  // and mainnet remain one dropdown change away in Settings.
-  return value === "mainnet" || value === "testnet" ? value : "standalone";
+  // Default to testnet, where the live deployment lives. Other networks
+  // remain one dropdown change away in Settings.
+  return value === "mainnet" || value === "standalone" ? value : "testnet";
 }

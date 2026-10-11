@@ -94,7 +94,7 @@ Delinquency marks track current state rather than latching: an account that repa
 
 ---
 
-## ⚙️ Quick Start & Local Deployment
+## ⚙️ Quick Start & Deployment
 
 ### Prerequisites
 
@@ -102,7 +102,6 @@ Make sure your workstation has the following installed:
 
 - Rust & Wasm32 Target — `rustup target add wasm32-unknown-unknown`
 - [Stellar CLI](https://developers.stellar.org/docs/tools/developer-tools)
-- Docker *(optional, for running a local quickstart network node)*
 
 ### 1. Clone & Build Workspace
 
@@ -138,46 +137,54 @@ cargo test --manifest-path solnet_contracts/Cargo.toml --workspace
 | 8 remaining contracts | 15 each |
 | **Total** | **291** |
 
-### 3. Deploy to Standalone Network
+### 3. Deploy to Testnet
 
-The deployment script generates an administrative keypair, installs all 12 compiled `.wasm` binaries onto the ledger, invokes each module's initialization hook with its own configuration arguments, and then wires the consumption loop above.
+The deployment script installs all 12 compiled `.wasm` binaries onto the ledger. Create and fund a deployer identity first, then deploy (note: `stellar contract deploy` only uploads the code — each module's `init` must be invoked separately afterwards, and the billing loop wired explicitly):
 
 ```bash
+stellar keys generate testnet-admin --network testnet
+stellar keys fund testnet-admin --network testnet
+
 chmod +x deploy.sh
-./deploy.sh
+NETWORK=testnet SOURCE=testnet-admin ./deploy.sh
 ```
 
-Configuration values are overridable via environment variables (for example `BASE_PRICE`, `YIELD_BPS`, `GRACE_PERIOD`); see `deploy.sh` for the full table.
-
-### 4. Connect a Wallet to the Standalone Network
-
-The frontend (`solnet-frontend`, `npm run dev`) supports Freighter, Albedo, xBull, Rabet, Lobstr, and Hana via a wallet picker. Reads need no signing; writes are signed in the wallet. For the local node, the wallet must be set to the standalone network — otherwise every write fails at signing time.
-
-**Freighter setup for standalone** (Settings → Networks → add custom network):
-
-| Field | Value |
-|---|---|
-| Name | `Standalone` |
-| URL | `http://localhost:8000/soroban/rpc` |
-| Passphrase | `Standalone Network ; February 2017` |
-| Allow HTTP connection | Enabled |
-
-Then switch to it, and fund the account from the local faucet:
+Then initialize and wire (replace the IDs with the ones the script printed):
 
 ```bash
-curl "http://localhost:8000/friendbot?addr=<YOUR_ADDRESS>"
+# initialize each contract, e.g.:
+stellar contract invoke --id <account_ledger> --source testnet-admin --network testnet \
+  -- init --admin <ADMIN> --watts-per-unit 1000000
+# ... repeat per contract; see deploy.sh INIT_ARGS for each module's arguments
+
+# wire the consumption loop:
+stellar contract invoke --id <account_ledger> --source testnet-admin --network testnet \
+  -- authorize_router --admin <ADMIN> --router <micro_billing>
+stellar contract invoke --id <micro_billing> --source testnet-admin --network testnet \
+  -- wire --admin <ADMIN> --ledger <account_ledger>
+stellar contract invoke --id <delinquency_disconnector> --source testnet-admin --network testnet \
+  -- wire --admin <ADMIN> --ledger <account_ledger>
 ```
 
-Disconnect and reconnect in the app afterwards — the network check runs at connect time. Other wallets must likewise be set to that exact passphrase.
+Configuration values are overridable via environment variables (for example `BASE_PRICE`, `YIELD_BPS`, `GRACE_PERIOD`); see `deploy.sh` for the full table. `NETWORK`/`SOURCE` select the target network and signing identity (defaults: testnet + `testnet-admin`, which must be funded via `stellar keys fund testnet-admin --network testnet`).
 
-**Troubleshooting — every error below was hit for real during development, in this order:**
+### 4. Connect a Wallet
+
+The frontend (`solnet-frontend`, `npm run dev`) supports Freighter, Albedo, xBull, Rabet, Lobstr, and Hana via a wallet picker. Reads need no signing; writes are signed in the wallet. Set Freighter (or your wallet of choice) to **Testnet** — no custom network needed — and fund the account from the public faucet:
+
+```bash
+curl "https://friendbot.stellar.org?addr=<YOUR_ADDRESS>"
+```
+
+Testnet resets periodically wipe all state. If contract calls start failing with `MissingValue`, redeploy with the command above rather than debugging the contracts.
+
+**Troubleshooting — every error below was hit for real during development:**
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `MissingValue: trying to get non-existing value for contract instance` | App pointed at testnet (the default when no `.env` exists); our contract IDs don't exist there | Settings → Network → Standalone, or set `VITE_STELLAR_NETWORK=standalone` (see `solnet-frontend/.env.example`) |
-| `Cannot connect to insecure Soroban RPC server if allowHttp isn't set` | The Stellar SDK blocks plain HTTP unless opted in | Fixed in code (`allowHttp` on standalone only); pull latest |
-| `Account not found: <address>` on reads | Wallet account was created elsewhere and doesn't exist on the local ledger | Fund it via the friendbot URL above |
-| `The connected wallet is on a different network…` | Wallet set to testnet/mainnet; reads still work, signing is blocked | Add the standalone custom network per the table above, switch to it, reconnect |
+| `MissingValue: trying to get non-existing value for contract instance` | Calling a contract ID that has no instance on the selected network (wrong network selected, or a testnet reset wiped state) | Check Settings → Network matches where you deployed; redeploy if testnet was reset |
+| `Account not found: <address>` on reads | Wallet account doesn't exist on the selected network yet | Fund it via the faucet above |
+| `The connected wallet is on a different network…` | Wallet set to a different network than the app; reads still work, signing is blocked | Switch the wallet to the same network as the app, then disconnect and reconnect |
 
 ---
 
@@ -288,21 +295,21 @@ A manual adversarial review of all 12 contracts identified the following issues.
 
 ## 🧪 Verified On-Chain
 
-The consumption loop was exercised end to end against a local standalone node (`stellar/quickstart`), not just the mock ledger:
+The consumption loop was exercised end to end on testnet, not just the mock ledger:
 
 | Step | Result |
 |---|---|
-| Deposit 100 stablecoin | 100 Watt-credits minted |
-| Reading 10 mWh @ 250/mWh | charge 2, ledger 100 → 98 (cross-contract debit) |
-| Replayed nonce | rejected, balance unchanged at 98 |
-| Reading 1000 mWh | charge 250, ledger → **-152** |
-| `assess` at seq 0 / 86399 | `GracePeriod` |
+| Deposit 50 stablecoin | 50 Watt-credits minted |
+| Reading 10 mWh @ 250/mWh | charge 2, ledger 50 → 48 (cross-contract debit) |
+| Replayed nonce | rejected, balance unchanged |
+| Reading 1000 mWh | charge 250, ledger → **−202** |
+| `assess` at seq 0 | `GracePeriod` |
 | `assess` at seq 86400 | `Disconnect` |
 | `issue_disconnect` | 32-byte relay instruction emitted |
 
 Storage TTL renewal and the traversal ceiling are likewise covered by tests, including ledger-advance decay tests that confirm state survives past the minimum entry lifetime.
 
-**Important caveat**: The node used (`stellar/quickstart:future` with `--standalone --enable-soroban-rpc`) runs captive core with `ARTIFICIALLY_ACCELERATE_TIME_FOR_TESTING=true` and **no production Soroban limits** (no CPU/memory/write-byte limits enforced). TTL behavior is accelerated (ledger closes ~1s). Real ledger measurements are pending a properly configured node.
+**Important caveat**: testnet resets periodically wipe all deployed state. If previously working calls start failing, redeploy with `NETWORK=testnet SOURCE=testnet-admin ./deploy.sh` (plus init + wire) rather than debugging the contracts.
 
 ---
 
@@ -329,26 +336,7 @@ Deployed with `NETWORK=testnet SOURCE=testnet-admin ./deploy.sh` (the deployer i
 
 Notes: testnet resets periodically wipe state — redeploy with the same command if calls start failing. The frontend resolves these IDs automatically when Testnet is selected in Settings (or via `VITE_CONTRACT_*` overrides; see `solnet-frontend/.env.example`).
 
-### Standalone
-
-Latest deployment on `stellar/quickstart:future` standalone network:
-
-| Contract | Address |
-|---|---|
-| `grid_topology` | `CACI6MVT43PFJSYB6S6MRJMDAD5ESQ24UIUE2WOLFFA2O62UOGMV4R2M` |
-| `account_ledger` | `CBVTI37HITOGPSEJAWDETW6WXV5AV6HATFZZYNGBWDKJFJUVUU3ANHEO` |
-| `micro_billing` | `CCSENFWA5YLZFHLLYHA4ZJSWYEMPDERN22CFG3FRILX62Z2NDFZYJEMY` |
-| `delinquency_disconnector` | `CB27GM4CUFQJVKMWY6AQU34XUM22SW5UY4RXOV2FTTC5K3LI7KZUAIQ7` |
-| `yield_auction` | `CA77OTMMRQFMBRM43IAV63U42TYCC3MOBAFW3W7QVGZAZBMS7GV2ZLIB` |
-| `peak_load_adjuster` | `CAECSXJT7PMR2YQXSOIOXAD34V2X3JDXOTBFHQAAZNC4TVMEIWDMM7MX` |
-| `battery_pool` | `CBPLRVACDTUYB7XMDE27FZL23WJ2WEQWEEJJUGM35UQV4CUNJWYXKILG` |
-| `community_capital` | `CAQU2ZHYZWFFJRDESEYVDXYT27GBZ6CKRWLYZEUKYMI3V7P5XPMIP3MS` |
-| `iot_registrar` | `CCUGHSDBNAGTBFDECRKERAWXUDCLFIDM4X6OB73GZ2H44QLFZWHK3QEJ` |
-| `cryptographic_oracle` | `CCZZTDOYPMZRU6FYBJIOAX7WIOEFKWDCNOEM7ONF2IAXEEZOWI4PHANF` |
-| `firmware_verifier` | `CDETI5MUCLSQCH5VTSTH2DNR2GVR2GJ77KVQUEHSYURPJ2A7L42L63EV` |
-| `hardware_slash` | `CAPG74I4YQQTRRYLLDAR6YABOU4XANECXRDQTMEECZNEMCC2Z2FDHFPD` |
-
-These addresses are also auto-generated in `solnet-frontend/src/lib/deployed-contracts.ts` by `deploy.sh` and used as fallbacks in the frontend.
+These addresses are also emitted per network by `deploy.sh` (`solnet-frontend/src/lib/deployed-contracts.<network>.ts`) and used as fallbacks in the frontend.
 
 ---
 

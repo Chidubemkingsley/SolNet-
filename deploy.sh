@@ -9,10 +9,11 @@ echo "========= 🚀 Initializing SolNet Deployment Tool ========="
 # 1. Start a local standalone network in the background if not already running
 # docker run --rm -it -p 8000:8000 stellar/quickstart:latest --standalone --enable-soroban-rpc
 
-# Network selection: NETWORK=standalone (default) or NETWORK=testnet.
-# SOURCE is the local signing identity; it must be funded on the target network.
-NETWORK="${NETWORK:-standalone}"
-SOURCE="${SOURCE:-admin_account}"
+# Network selection: NETWORK=testnet (default) or NETWORK=standalone.
+# SOURCE is the local signing identity; it must be funded on the target network
+# (on testnet: `stellar keys fund <identity> --network testnet`).
+NETWORK="${NETWORK:-testnet}"
+SOURCE="${SOURCE:-testnet-admin}"
 
 # 2. Configure network identifiers (standalone only; testnet/mainnet are built in)
 if [[ "$NETWORK" == "standalone" ]]; then
