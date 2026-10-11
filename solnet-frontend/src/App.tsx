@@ -197,7 +197,7 @@ const PAGES: Item[] = [
   { path:'/admin', title:'Operator admin', summary:'Grid-operator actions. Every control unlocks only for the wallet matching that contract\u2019s on-chain admin.', section:'System', icon:ShieldCheck, kind:'none' },
 ];
 
-const TYPE_OPTIONS: SorobanArgumentType[] = ['address','bool','string','symbol','bytes','bytes32','i32','u32','i64','u64','i128','u128','i256','u256','json'];
+const TYPE_OPTIONS: SorobanArgumentType[] = ['address','bool','string','symbol','bytes','bytes32','i32','u32','i64','u64','i128','u128','i256','u256','json','offence'];
 function titleFor(path: string) { return PAGES.find(item => item.path === path) ?? PAGES[0]; }
 
 function App() {
@@ -593,7 +593,7 @@ function OperationalView({ page }: { page: Item }) {
     if (page.path === '/firmware') return [{name:'device_key',type:'bytes32' as const,value:deviceId},{name:'firmware_hash',type:'bytes32' as const,value:hash}];
     if (page.path === '/devices') return [{name:'public_key',type:'bytes32' as const,value:deviceId},{name:'model',type:'string' as const,value:hash}];
     if (page.path === '/offline-ingestion') return [{name:'submitter',type:'address' as const,value:account || wallet || ''},{name:'batch_id',type:'bytes32' as const,value:batchId},{name:'entries',type:'telemetry' as const,value:entriesJson},{name:'digest',type:'bytes32' as const,value:digestHex}];
-    if (page.path === '/incidents') return [{name:'admin',type:'address' as const,value:wallet || ''},{name:'owner',type:'address' as const,value:account},{name:'offence',type:'u32' as const,value:offence}];
+    if (page.path === '/incidents') return [{name:'admin',type:'address' as const,value:wallet || ''},{name:'owner',type:'address' as const,value:account},{name:'offence',type:'offence' as const,value:offence}];
     return defaultArguments(method);
   }, [method, page.path, account, wallet, amount, meterId, hash, deviceId, proposalId, support, seq, auctionId, batchId, entriesJson, digestHex, offence]);
   const incomplete = args.some(arg => arg.value === '' || (typeof arg.value === 'string' && !arg.value.trim()));
@@ -618,6 +618,27 @@ function OperationalView({ page }: { page: Item }) {
       setReadResult({kind:'tx',text:result.status === 'SUCCESS' ? 'RPC confirmed this transaction on-chain.' : 'RPC accepted this transaction and it remains pending.',hash:result.hash,status:result.status});
     } catch(error) { setReadResult({kind:'error',text:error instanceof Error ? error.message : 'Transaction was not confirmed by RPC.'}); }
     finally { setBusy(false); }
+  };
+  const [recordBusy, setRecordBusy] = useState(false);
+  const [record, setRecord] = useState<{ collateral: string; slashed: string; appealed: string } | null>(null);
+  const [recordError, setRecordError] = useState('');
+  const checkRecord = async () => {
+    // Live investigation record: posted collateral plus whether this exact
+    // owner+offence was already slashed or is under appeal. Read-only.
+    if (!wallet || !isValidContractAddress(contractId)) return;
+    const owner = (account || wallet).trim();
+    setRecordBusy(true); setRecord(null); setRecordError('');
+    try {
+      await verifyContractDeployment(contractId, settings);
+      const offenceArg = { name: 'offence', type: 'offence' as const, value: offence };
+      const [collateral, slashed, appealed] = await Promise.all([
+        simulateContractRead({ config: settings, sourceAddress: wallet, contractId, method: 'collateral_of', args: [{ name: 'owner', type: 'address' as const, value: owner }] }),
+        simulateContractRead({ config: settings, sourceAddress: wallet, contractId, method: 'was_slashed', args: [{ name: 'owner', type: 'address' as const, value: owner }, offenceArg] }),
+        simulateContractRead({ config: settings, sourceAddress: wallet, contractId, method: 'is_appealed', args: [{ name: 'owner', type: 'address' as const, value: owner }, offenceArg] }),
+      ]);
+      setRecord({ collateral: toDisplayJson(collateral), slashed: toDisplayJson(slashed), appealed: toDisplayJson(appealed) });
+    } catch (error) { setRecordError(error instanceof Error ? error.message : 'Record check failed.'); }
+    finally { setRecordBusy(false); }
   };
 
   return <div>
@@ -717,7 +738,17 @@ function OperationalView({ page }: { page: Item }) {
         <div className="grid" style={{gap:7}}>{bulkResults.map((r, i) => <div key={`${r.address}-${i}`} className="row"><span className="mono" style={{fontSize:10}}>{r.address ? shortenAddress(r.address) : '—'}</span><span className={`status ${r.ok ? 'ok' : 'error'}`} data-testid={`status-bulk-${i}`}>{r.ok ? (r.hash ? `OK · ${r.hash.slice(0, 8)}…` : 'OK') : (r.error ?? 'FAILED')}</span></div>)}</div></div>}
     </section>}
     {page.path === '/campaigns' && <div className="section-kicker">Funding opportunities</div>}
-    {page.path === '/incidents' && <div className="section-kicker">Investigation record</div>}
+    {page.path === '/incidents' && <section className="card" style={{marginTop:15}}>
+      <div className="card-header"><div><h2 className="card-title">Investigation record</h2><div className="card-subtitle">Live collateral, slash and appeal state for the owner + offence above.</div></div><button className="button secondary" disabled={!wallet || !isValidContractAddress(contractId) || recordBusy} onClick={() => void checkRecord()} data-testid="button-check-record"><RefreshCw size={13}/>{recordBusy ? 'Checking…' : record ? 'Recheck' : 'Check record'}</button></div>
+      {!wallet && <div className="field-help">Connect a wallet to use as the simulation source.</div>}
+      <div className="field-help" style={{marginBottom:10}}>Slashing needs posted collateral first: <span className="mono">deposit_collateral</span> in Developer tools, signed by the owner. It books an accounting deposit — no tokens move.</div>
+      {recordError && <div className="notice error" data-testid="status-record-error">{recordError}</div>}
+      {record && <div className="grid" style={{gap:7}} data-testid="data-investigation-record">
+        <div className="row"><span className="field-help">Posted collateral</span><span className="mono" style={{fontSize:11}}>{record.collateral}</span></div>
+        <div className="row"><span className="field-help">Already slashed for this offence</span><span className="mono" style={{fontSize:11}}>{record.slashed}</span></div>
+        <div className="row"><span className="field-help">Under appeal</span><span className="mono" style={{fontSize:11}}>{record.appealed}</span></div>
+      </div>}
+    </section>}
   </div>;
 }
 
@@ -829,7 +860,7 @@ function AdminView() {
       fields={[
         { name: 'admin', type: 'address', label: 'Admin', placeholder: 'Defaults to connected wallet', fallbackWallet: true },
         { name: 'owner', type: 'address', label: 'Owner to slash', placeholder: 'Operator address' },
-        { name: 'offence', type: 'u32', label: 'Offence code · 1 = spoofed generation, 2 = router bypass', placeholder: '1 or 2' },
+        { name: 'offence', type: 'offence', label: 'Offence code · 1 = spoofed generation, 2 = router bypass', placeholder: '1 or 2' },
       ]} />
     <AdminForm contractKey="account_ledger" methodName="set_token" title="Set backing token" subtitle="Point the ledger at a Stellar Asset Contract. One-way configuration." isAdmin={isAdmin('account_ledger')}
       fields={[

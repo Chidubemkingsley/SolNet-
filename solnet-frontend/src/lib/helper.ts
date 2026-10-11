@@ -70,7 +70,8 @@ export type SorobanArgumentType =
   | "i256"
   | "u256"
   | "json"
-  | "telemetry";
+  | "telemetry"
+  | "offence";
 
 export interface NetworkStatus {
   network: StellarNetwork;
@@ -443,6 +444,19 @@ export function encodeTelemetryEntries(raw: unknown): xdr.ScVal {
   return xdr.ScVal.scvVec(entryVals);
 }
 
+/// Encodes a hardware-slash offence code as the contract's `Offence` enum.
+/// Unit-variant contracttype enums serialize as a one-element vec holding
+/// the variant symbol — *not* a bare symbol and *not* an integer. Read
+/// straight from soroban-sdk-macros `derive_enum.rs` (`into_xdr` builds
+/// `(symbol,).try_into()` = ScVec, `try_from_val` only accepts ScVal::Vec),
+/// after a bare symbol trapped the live contract in testing.
+export function encodeOffenceCode(raw: unknown): xdr.ScVal {
+  const code = String(raw).trim();
+  if (code === "1") return xdr.ScVal.scvVec([scSymbol("SpoofedGeneration")]);
+  if (code === "2") return xdr.ScVal.scvVec([scSymbol("RouterBypass")]);
+  throw new Error(`offence must be 1 (spoofed generation) or 2 (router bypass).`);
+}
+
 export function bytesToHex(value: unknown): string {
   const bytes =
     value instanceof Uint8Array
@@ -501,6 +515,9 @@ function encodeArgument(argument: ContractArgument) {
     }
     case "telemetry": {
       return encodeTelemetryEntries(raw);
+    }
+    case "offence": {
+      return encodeOffenceCode(raw);
     }
     case "symbol":
       return nativeToScVal(String(raw), { type: "symbol" });
