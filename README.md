@@ -192,7 +192,9 @@ stellar contract invoke --id <account_ledger> --source testnet-admin --network t
   -- set_token --admin <ADMIN> --token CDA5HO4KFC6HI23DJ5RDPQQDGSOFLL3LBFWPQNHUFMQAQT3XX35KGM5J
 ```
 
-To hold SNUSD, an account first needs a trustline, then the issuer mints to it:
+To hold SNUSD, an account first needs a trustline, then the issuer mints to it
+(same pattern for SNEUR with `SNEUR:GDLFIT4PVR4P5N7X5PVK55WDYH7RGX4VN2ZA2U4Y65SGGEMTOOXYZWTF`,
+SAC `CA45FX7O2MKTQIBOAQC2YQCBEK5ZBU3H7FSGRWW5BYVZUAKUW5PUXCGJ`, issuer identity `sneur-issuer`):
 
 ```bash
 stellar tx new change-trust --source-account <USER> \
@@ -356,11 +358,11 @@ Token-backed deposits were verified end to end against the SNUSD Stellar Asset C
 | `withdraw_secured` 48 SNUSD | 48 SNUSD returned, escrow holds 52, credits read 52 |
 | SNEUR round trip (`CC2F…4G2`) | deposit 200 → escrow 200 / admin 4800 / watts 200; full withdraw → escrow 0 / admin 5000 |
 
-Dual-currency status: both stablecoins exist as live test assets with verified
-escrow round trips, but billing (`micro_billing`) and disconnection wire to a
-single ledger — today the SNUSD one. Serving both currencies end to end needs
-either a second billing stack pointed at the SNEUR ledger plus a currency
-selector in the frontend, or a contract upgrade to multi-token backing.
+Euro loop on the SNEUR stack, verified end to end: deposit 60 → escrow 60 →
+record → 58 → `NotDelinquent` → record → −192 → `GracePeriod` → `Disconnect`
+at seq 86400 → 32-byte relay instruction. Both currencies are served by
+separate single-currency stacks (no multi-token ledger upgrade was needed);
+the frontend topbar switches the settlement trio between them.
 
 Storage TTL renewal and the traversal ceiling are likewise covered by tests, including ledger-advance decay tests that confirm state survives past the minimum entry lifetime.
 
@@ -391,7 +393,17 @@ Deployed with `NETWORK=testnet SOURCE=testnet-admin ./deploy.sh` (the deployer i
 
 Notes: testnet resets periodically wipe state — redeploy with the same command if calls start failing. The frontend resolves these IDs automatically when Testnet is selected in Settings (or via `VITE_CONTRACT_*` overrides; see `solnet-frontend/.env.example`).
 
-These addresses are also emitted per network by `deploy.sh` (`solnet-frontend/src/lib/deployed-contracts.<network>.ts`) and used as fallbacks in the frontend. The euro stack is `account_ledger CC2F…4G2`, `micro_billing CCQ6…DSY`, `delinquency_disconnector CBVD…42Z`, wired to the SNEUR token; the frontend topbar switches the settlement stack between SNUSD and SNEUR (the other nine contracts are shared).
+### Euro stack (testnet)
+
+Second settlement trio, wired to the SNEUR token. The other nine contracts above are shared between both currencies.
+
+| Contract | Address |
+|---|---|
+| `account_ledger` | `CC2FLOLU4AGGPQZYNBAKENNRELSXSU56BHFLHMPNXMV6EEIUVCVZI4G2` |
+| `micro_billing` | `CCQ6RBXRTV4PW46PY7NWUKM4RILUL3J6INK3IG4UVLVYONGAVNT2EDSY` |
+| `delinquency_disconnector` | `CBVDIPDZZULUUIUOKC5NUNB76J2LVG4YN5PFDTFMZ3UECMNETFW6542Z` |
+
+These addresses are also emitted per network by `deploy.sh` (`solnet-frontend/src/lib/deployed-contracts.<network>.ts`) and used as fallbacks in the frontend. The topbar **SNUSD/SNEUR selector** switches the settlement trio between stacks; saved custom IDs are preserved except for the three stack keys the switcher owns, and stored IDs never leak across networks.
 
 ---
 
