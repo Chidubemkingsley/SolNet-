@@ -16,7 +16,7 @@ import {
 import {
   assertWalletNetwork, checkRpcStatus, connectStellarWallet, disconnectStellarWallet, isValidContractAddress, NETWORKS,
   getNetworkPassphrase, listWallets, readConnectedWallet, readStoredWallet, shortenAddress, simulateContractRead, submitContractTransaction,
-  fetchContractEvents, toDisplayJson, verifyContractDeployment, type ConnectedWallet, type ContractArgument, type NetworkStatus,
+  fetchContractEvents, toDisplayJson, verifyContractDeployment, stellarAddressToRawHex, type ConnectedWallet, type ContractArgument, type NetworkStatus,
   type SorobanArgumentType,
 } from '@/lib/helper';
 import type { ISupportedWallet } from '@creit.tech/stellar-wallets-kit';
@@ -389,6 +389,52 @@ function OperationalView({ page }: { page: Item }) {
   const [digestHex, setDigestHex] = useState('');
   const [offence, setOffence] = useState('');
   const [genSecret, setGenSecret] = useState<string | null>(null);
+  const [bulkInput, setBulkInput] = useState('');
+  const [bulkModel, setBulkModel] = useState('');
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkResults, setBulkResults] = useState<Array<{ address: string; ok: boolean; hash?: string; error?: string }> | null>(null);
+  const useConnectedWalletAsDevice = () => {
+    if (!wallet) return;
+    try { setDeviceId(stellarAddressToRawHex(wallet)); }
+    catch (error) { setReadResult({ kind: 'error', text: error instanceof Error ? error.message : 'Could not decode wallet address.' }); }
+  };
+  const registerBulk = async () => {
+    if (!wallet) return;
+    const lines = bulkInput.split(/[\s,;]+/).map(s => s.trim()).filter(Boolean);
+    if (lines.length === 0 || !bulkModel.trim()) return;
+    const registryId = page.contract ? settings.contracts[page.contract] : '';
+    setBulkBusy(true); setBulkResults([]);
+    try { await verifyContractDeployment(registryId, settings); }
+    catch (error) {
+      setBulkResults([{ address: '', ok: false, error: error instanceof Error ? error.message : 'Deployment check failed.' }]);
+      setBulkBusy(false);
+      return;
+    }
+    const out: NonNullable<typeof bulkResults> = [];
+    for (const line of lines) {
+      let hex = '';
+      try { hex = stellarAddressToRawHex(line); }
+      catch (error) {
+        out.push({ address: line, ok: false, error: error instanceof Error ? error.message : 'Invalid address.' });
+        setBulkResults([...out]);
+        continue;
+      }
+      try {
+        const tx = await submitContractTransaction({
+          config: settings, sourceAddress: wallet, contractId: registryId, method: 'register_device',
+          args: [
+            { name: 'public_key', type: 'bytes32' as const, value: hex },
+            { name: 'model', type: 'string' as const, value: bulkModel.trim() },
+          ],
+        });
+        out.push({ address: line, ok: tx.status === 'SUCCESS', hash: tx.hash, error: tx.status === 'SUCCESS' ? undefined : 'RPC accepted the transaction and it remains pending.' });
+      } catch (error) {
+        out.push({ address: line, ok: false, error: error instanceof Error ? error.message : 'Transaction failed.' });
+      }
+      setBulkResults([...out]);
+    }
+    setBulkBusy(false);
+  };
   const generateDeviceKey = () => {
     // Demo stand-in for the factory: fresh ed25519 pair, public half goes
     // straight into the form, secret shown once for the operator to keep.
@@ -552,6 +598,7 @@ function OperationalView({ page }: { page: Item }) {
         {(page.path === '/payments' || page.path === '/withdraw') && <TextField label={page.path === '/payments' ? 'Deposit amount · token units (moves real tokens)' : 'Credits to burn · releases backing tokens'} value={amount} onChange={setAmount} placeholder="Enter integer amount" testid="input-amount" />}
         {page.path === '/market' && <><TextField label="Auction ID" value={auctionId} onChange={setAuctionId} placeholder="Enter on-chain auction number" testid="input-auction-id" /><TextField label="Bid price per milli-watt-hour · integer" value={hash} onChange={setHash} placeholder="Enter integer price" testid="input-max-price" /></>}
         {(page.path === '/firmware' || page.path === '/devices') && <TextField label="Device public key · 32-byte hex" value={deviceId} onChange={setDeviceId} placeholder="Enter device public key hex" testid="input-device-id" />}
+        {page.path === '/devices' && <div style={{marginBottom:14}}><button className="button ghost" disabled={!wallet} onClick={useConnectedWalletAsDevice} data-testid="button-use-wallet-as-device">Use connected wallet</button><div className="field-help" style={{marginTop:6}}>Decodes your wallet address to its raw key. Registration itself still needs the admin key.</div></div>}
         {page.path === '/devices' && <div style={{marginBottom:14}}>
           <button className="button secondary" onClick={generateDeviceKey} data-testid="button-generate-device-key">Generate demo device key</button>
           <div className="field-help" style={{marginTop:6}}>Stands in for the factory step: creates a fresh keypair and fills the public key above. In production this comes from the manufacturer manifest.</div>
@@ -610,6 +657,15 @@ function OperationalView({ page }: { page: Item }) {
           <div className="row" style={{justifyContent:'flex-start',marginTop:10}}><button className="button" disabled={listBusy} onClick={() => void submitListing()} data-testid="button-confirm-listing">{listBusy ? 'Awaiting RPC…' : 'Confirm & sign with Freighter'}</button><button className="button ghost" onClick={() => setListReview(false)} data-testid="button-cancel-listing">Cancel</button></div>
         </div>}
       {listResult && <div style={{marginTop:12}}>{listResult.kind === 'error' ? <div className="notice error" data-testid="status-listing-error">{listResult.text}</div> : <><div className="notice neutral" data-testid="status-listing-result">{listResult.text}</div>{listResult.hash && <><div className="section-kicker">Transaction hash · {listResult.status}</div><div className="result-box" data-testid="text-listing-hash">{listResult.hash}</div></>}</>}</div>}
+    </section>}
+    {page.path === '/devices' && <section className="card" style={{marginTop:15}}>
+      <div className="card-header"><div><h2 className="card-title">Bulk onboarding</h2><div className="card-subtitle">Register many wallet addresses in one pass. One signature per address.</div></div><span className="metric-icon"><Users /></span></div>
+      <p className="field-help" style={{marginBottom:12}}>Paste <span className="mono">G…</span> addresses (one per line, comma or space separated). Each is decoded to its raw key and registered with the model below. Submitting still requires the admin wallet — every line is its own signed transaction.</p>
+      <div className="field"><label>Wallet addresses</label><textarea className="textarea mono" value={bulkInput} onChange={e => setBulkInput(e.target.value)} placeholder="GABC…&#10;GDEF…" rows={4} data-testid="input-bulk-addresses" /></div>
+      <TextField label="Model name · text (applies to all)" value={bulkModel} onChange={setBulkModel} placeholder="e.g. Household meter" testid="input-bulk-model" />
+      <button className="button" disabled={!wallet || bulkBusy || !bulkInput.trim() || !bulkModel.trim()} onClick={() => void registerBulk()} data-testid="button-register-bulk">{bulkBusy ? 'Registering…' : 'Register all'}</button>
+      {bulkResults && <div style={{marginTop:12}}><div className="section-kicker">{bulkResults.filter(r => r.ok).length} of {bulkResults.length} registered</div>
+        <div className="grid" style={{gap:7}}>{bulkResults.map((r, i) => <div key={`${r.address}-${i}`} className="row"><span className="mono" style={{fontSize:10}}>{r.address ? shortenAddress(r.address) : '—'}</span><span className={`status ${r.ok ? 'ok' : 'error'}`} data-testid={`status-bulk-${i}`}>{r.ok ? (r.hash ? `OK · ${r.hash.slice(0, 8)}…` : 'OK') : (r.error ?? 'FAILED')}</span></div>)}</div></div>}
     </section>}
     {page.path === '/campaigns' && <div className="section-kicker">Funding opportunities</div>}
     {page.path === '/incidents' && <div className="section-kicker">Investigation record</div>}

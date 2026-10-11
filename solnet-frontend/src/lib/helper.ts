@@ -635,6 +635,15 @@ export function toDisplayJson(value: unknown): string {
   );
 }
 
+export function stellarAddressToRawHex(address: string): string {
+  const trimmed = address.trim();
+  if (!StrKey.isValidEd25519PublicKey(trimmed)) {
+    throw new Error("Enter a valid Stellar (G…) account address.");
+  }
+  const raw = StrKey.decodeEd25519PublicKey(trimmed);
+  return Array.from(raw, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
 export function shortenAddress(address: string, chars = 5): string {
   if (address.length <= chars * 2 + 3) return address;
   return `${address.slice(0, chars + 1)}…${address.slice(-chars)}`;
