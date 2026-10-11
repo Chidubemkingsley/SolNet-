@@ -469,6 +469,24 @@ function OperationalView({ page }: { page: Item }) {
   const contract = page.contract ? CONTRACT_BY_KEY[page.contract] : undefined;
   const method = contract?.methods.find(entry => entry.name === page.method);
   const contractId = page.contract ? settings.contracts[page.contract] : '';
+  const [contractAdmin, setContractAdmin] = useState<string | null>(null);
+  useEffect(() => {
+    // Surface who actually holds authority here, so a non-admin learns it
+    // before paying fees on a doomed transaction rather than after.
+    // Best-effort: contracts without an admin() entrypoint simply show nothing.
+    if (!page.contract || !wallet || !isValidContractAddress(contractId)) { setContractAdmin(null); return; }
+    let active = true;
+    simulateContractRead({
+      config: settings,
+      sourceAddress: wallet,
+      contractId,
+      method: 'admin',
+      args: [],
+    })
+      .then(value => { if (active) setContractAdmin(typeof value === 'string' ? value : null); })
+      .catch(() => { if (active) setContractAdmin(null); });
+    return () => { active = false; };
+  }, [page.path, page.contract, contractId, settings]);
   const args = useMemo(() => {
     if (!method) return [];
     if (page.path === '/dashboard') return [{name:'account',type:'address' as const,value:account || wallet || ''}];
@@ -516,6 +534,7 @@ function OperationalView({ page }: { page: Item }) {
         <div className="card-header"><div><h2 className="card-title">On-chain interface</h2><div className="card-subtitle">{contract?.label ?? 'Configured contract'} · {method?.name ?? 'No method selected'}</div></div><span className="metric-icon"><Database /></span></div>
         <div className="field"><label>Target contract</label><div className="input mono" data-testid="text-target-contract">{contractId || 'No contract ID configured'}</div><div className="field-help">{contractId && !isValidContractAddress(contractId) ? 'This value is not a valid Soroban contract address.' : 'Target and method are read from the supplied contract registry.'} <Link href="/settings" className="inline-code" data-testid="link-configure-contract">Configure network & IDs</Link></div></div>
         <div className="field"><label>Method</label><div className="input mono" data-testid="text-target-method">{method?.name ?? 'Not defined in contract registry'}</div></div>
+        {contractAdmin && <div className="field"><label>Contract admin</label><div className="input mono" data-testid="text-contract-admin">{shortenAddress(contractAdmin)}</div><div className="field-help">{wallet && wallet === contractAdmin ? 'Your connected wallet holds operator authority here.' : 'Only this address can sign state-changing calls. Any other wallet will fail on-chain.'}</div></div>}
         {contract && <div className="notice neutral" style={{marginBottom:14}}>{contract.description} Interfaces are not independently ABI-verified; only the supplied registry is used.</div>}
         {!wallet && <div className="notice" style={{marginBottom:13}}>Connect Freighter to read contract state. Simulation requires a source account and a matching network.</div>}
       {(page.path === '/dashboard' || page.path === '/portfolio' || page.path === '/meters') ? <AddressField label={page.path === '/portfolio' ? 'Investor address' : 'Account address'} value={account} onChange={setAccount} fallback={wallet} testid="input-account-address" /> : null}
