@@ -8,8 +8,8 @@ import { Route, Switch, useLocation, Router as WouterRouter, Link } from 'wouter
 import {
   Activity, ArrowDownToLine, ArrowRight, ArrowUpRight, BatteryCharging, Blocks, BookOpenCheck, Box, Cable,
   ChevronRight, CircleDollarSign, Cpu, Database, FileClock, FileText, Gauge,
-  HardDrive, Landmark, Menu, Network, PanelsTopLeft, Radio, RefreshCw, Shield, ShieldAlert, ShieldCheck, SlidersHorizontal,
-  Sparkles, Sun, Vote, Wallet, X, Zap, Settings, Settings as SettingsIcon, Wrench, ChartNoAxesCombined,
+  HardDrive, Landmark, Menu, Network, PanelsTopLeft, Radio, RefreshCw, Shield, ShieldAlert, ShieldCheck,
+  Sparkles, Sun, Wallet, X, Zap, Settings, Settings as SettingsIcon, Wrench, ChartNoAxesCombined,
   Globe, Leaf, Users, BarChart, Zap as ZapIcon,
   Github, ExternalLink,
 } from 'lucide-react';
@@ -186,15 +186,11 @@ const PAGES: Item[] = [
   { path:'/batteries', title:'Storage reserves', summary:'Available maintenance reserve from the deployed battery pool.', section:'Operations', icon:BatteryCharging, contract:'battery_pool', method:'available', kind:'read' },
   { path:'/campaigns', title:'Community capital', summary:'Total capital backing the deployed community fund.', section:'Capital & governance', icon:Sparkles, contract:'community_capital', method:'total_capital', kind:'read' },
   { path:'/portfolio', title:'Investor portfolio', summary:'Share balance for the connected wallet, read live from the fund.', section:'Capital & governance', icon:Landmark, contract:'community_capital', method:'shares_of', kind:'read' },
-  { path:'/proposals', title:'Capital proposals', summary:'No proposal or voting entrypoint exists on the deployed fund contract.', section:'Capital & governance', icon:FileText, kind:'none' },
   { path:'/audit', title:'Revenue & audit', summary:'Review raw Soroban events from a selected deployed contract. Revenue semantics require the deployed contract ABI.', section:'Capital & governance', icon:BookOpenCheck, kind:'none' },
   { path:'/devices', title:'Device registry', summary:'Register or inspect meter public keys on the deployed IoT registrar.', section:'Field systems', icon:Cpu, contract:'iot_registrar', method:'register_device', kind:'write' },
   { path:'/offline-ingestion', title:'Offline ingestion', summary:'Submit a signed offline telemetry batch to the deployed oracle.', section:'Field systems', icon:Radio, contract:'cryptographic_oracle', method:'submit_batch', kind:'write' },
   { path:'/firmware', title:'Firmware attestation', summary:'Verify a device firmware hash against the deployed firmware verifier.', section:'Field systems', icon:HardDrive, contract:'firmware_verifier', method:'verify_device', kind:'read' },
   { path:'/incidents', title:'Device incidents', summary:'Slash a proven offence against a posted collateral deposit.', section:'Field systems', icon:ShieldAlert, contract:'hardware_slash', method:'slash', kind:'write' },
-  { path:'/parameters', title:'Protocol parameters', summary:'Administrative parameter methods were not specified. Use typed RPC tools only when the deployed ABI is known.', section:'Protocol', icon:SlidersHorizontal, kind:'none' },
-  { path:'/governance', title:'Governance', summary:'No voting entrypoint exists on the deployed contracts.', section:'Protocol', icon:Vote, kind:'none' },
-  { path:'/treasury', title:'Treasury distribution', summary:'Treasury distribution methods were not specified. Inspect live reserves or use typed RPC tools; no payout method is guessed.', section:'Protocol', icon:CircleDollarSign, kind:'none' },
   { path:'/developer-tools', title:'Developer tools', summary:'Run read simulations and carefully review typed contract invocations before Freighter signing.', section:'Protocol', icon:Blocks, kind:'none' },
   { path:'/settings', title:'Network settings', summary:'Configure RPC, network, and real Soroban contract IDs. Changes are stored in this browser.', section:'System', icon:SettingsIcon, kind:'none' },
 ];
@@ -356,7 +352,7 @@ function Shell({ page, menuOpen, setMenuOpen, walletError, setWalletError, updat
         {networkError && <div className="notice neutral row" data-testid="status-rpc-error" style={{marginBottom:14}}><span>{networkError}</span><button className="button ghost" onClick={() => void refreshNetwork()} data-testid="button-rpc-retry"><RefreshCw size={13} />Retry RPC</button></div>}
         {page.path === '/settings' ? <SettingsView updateSettings={updateSettings} /> :
           page.path === '/developer-tools' ? <DeveloperView /> : page.path === '/audit' ? <AuditView /> :
-            page.path === '/treasury' || page.path === '/parameters' ? <UnspecifiedInterfaceView page={page} /> : <OperationalView page={page} />}
+            <OperationalView page={page} />}
       </div>
     </main>
   </div>;
@@ -642,23 +638,6 @@ function AuditView() {
           <EmptyState title="No event query yet">Choose a configured deployed contract to query its raw Soroban events.</EmptyState>}
       </section>
     </div>
-  </div>;
-}
-
-function UnspecifiedInterfaceView({ page }: { page: Item }) {
-  const related = page.path === '/treasury'
-    ? { path: '/batteries', label: 'Read configured storage reserves', detail: 'The battery-pool reserve method is defined; treasury distribution signatures were not.' }
-    : { path: '/pricing', label: 'Read the live tariff', detail: 'The tariff calculation is defined; administrative parameter methods were not.' };
-  return <div>
-    <PageHeading page={page} />
-    <section className="card">
-      <div className="card-header"><div><h2 className="card-title">No verified method supplied</h2><div className="card-subtitle">The interface is not guessed from a method name.</div></div><span className="metric-icon"><Database /></span></div>
-      <div className="notice neutral" style={{marginBottom:13}}>{related.detail} Add the deployed contract ABI or verify the method signature before making state changes.</div>
-      <div className="row" style={{justifyContent:'flex-start',flexWrap:'wrap'}}>
-        <Link className="button secondary" href={related.path}>{related.label}</Link>
-        <Link className="button" href="/developer-tools"><Wrench size={13}/>Open typed developer tools</Link>
-      </div>
-    </section>
   </div>;
 }
 
