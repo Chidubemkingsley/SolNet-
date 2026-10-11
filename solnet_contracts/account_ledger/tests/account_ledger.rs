@@ -655,3 +655,96 @@ fn an_idle_ledger_no_longer_bricks_the_contract_instance() {
     assert_eq!(client.rate(), SCALE);
     assert_eq!(client.deposit(&account, &50), 50);
 }
+
+#[test]
+fn set_token_stores_and_token_getter_reflects_it() {
+    let (e, admin, client) = setup();
+    assert_eq!(client.token(), None);
+    let token = Address::generate(&e);
+    client.set_token(&admin, &token);
+    assert_eq!(client.token(), Some(token));
+}
+
+#[test]
+fn set_token_requires_admin_authority() {
+    let (e, _admin, client) = setup();
+    let impostor = Address::generate(&e);
+    let token = Address::generate(&e);
+    assert_eq!(
+        client.try_set_token(&impostor, &token),
+        Err(Ok(Error::NotAdmin))
+    );
+    assert_eq!(client.token(), None);
+}
+
+#[test]
+fn deposit_secured_without_token_is_rejected() {
+    let (e, _admin, client) = setup();
+    let account = Address::generate(&e);
+    assert_eq!(
+        client.try_deposit_secured(&account, &100),
+        Err(Ok(Error::TokenNotSet))
+    );
+    assert_eq!(client.watt_balance(&account), 0);
+    assert_eq!(client.stable_balance(&account), 0);
+}
+
+#[test]
+fn withdraw_secured_without_token_is_rejected() {
+    let (e, _admin, client) = setup();
+    let account = Address::generate(&e);
+    client.deposit(&account, &100);
+    assert_eq!(
+        client.try_withdraw_secured(&account, &50),
+        Err(Ok(Error::TokenNotSet))
+    );
+    assert_eq!(client.watt_balance(&account), 100);
+}
+
+#[test]
+fn deposit_secured_rejects_non_positive_amounts() {
+    let (e, admin, client) = setup();
+    let token = Address::generate(&e);
+    client.set_token(&admin, &token);
+    let account = Address::generate(&e);
+    assert_eq!(
+        client.try_deposit_secured(&account, &0),
+        Err(Ok(Error::InvalidAmount))
+    );
+    assert_eq!(
+        client.try_deposit_secured(&account, &-10),
+        Err(Ok(Error::InvalidAmount))
+    );
+}
+
+#[test]
+fn withdraw_secured_rejects_non_positive_credits() {
+    let (e, admin, client) = setup();
+    let token = Address::generate(&e);
+    client.set_token(&admin, &token);
+    let account = Address::generate(&e);
+    assert_eq!(
+        client.try_withdraw_secured(&account, &0),
+        Err(Ok(Error::InvalidCredits))
+    );
+    assert_eq!(
+        client.try_withdraw_secured(&account, &-10),
+        Err(Ok(Error::InvalidCredits))
+    );
+}
+
+#[test]
+fn deposit_secured_rejects_dust_below_one_credit() {
+    let (e, admin, client) = setup_with_rate(1);
+    let token = Address::generate(&e);
+    client.set_token(&admin, &token);
+    let account = Address::generate(&e);
+    // rate 1: amount 1 mints 1*1/1_000_000 = 0 credits -> must fail
+    // BEFORE any token movement, not after.
+    assert_eq!(
+        client.try_deposit_secured(&account, &1),
+        Err(Ok(Error::InvalidAmount))
+    );
+    assert_eq!(client.watt_balance(&account), 0);
+    assert_eq!(client.stable_balance(&account), 0);
+}

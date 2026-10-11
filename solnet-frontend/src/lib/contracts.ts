@@ -79,6 +79,10 @@ export const CONTRACTS: ContractDefinition[] = [
       method("revoke_router", "write", [address("admin"), address("router")]),
       method("is_router", "read", [address("router")]),
       method("apply_consumption", "write", [address("router"), address("account"), i128("credits")]),
+      method("set_token", "write", [address("admin"), address("token")]),
+      method("token", "read"),
+      method("deposit_secured", "write", [address("account"), i128("amount")]),
+      method("withdraw_secured", "write", [address("account"), i128("credits")]),
     ],
   },
   {

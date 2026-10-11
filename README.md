@@ -51,7 +51,7 @@ SolNet bypasses monolithic design vulnerabilities by dividing responsibilities i
 | # | Contract | Module | Responsibility |
 |---|----------|--------|----------------|
 | 1 | `grid_topology` | Foundation | Defines the physical layout of the grid, mapping downstream nodes, generation points, and storage arrays. |
-| 2 | `account_ledger` | Consumption & Settlement | Tracks stablecoin balances and converts value into internal, hyper-fractionalized "Watt-credit" accounting. |
+| 2 | `account_ledger` | Consumption & Settlement | Tracks stablecoin balances and converts value into internal, hyper-fractionalized "Watt-credit" accounting. `deposit_secured`/`withdraw_secured` move real tokens 1:1 through a configured Stellar Asset Contract. |
 | 3 | `micro_billing` | Consumption & Settlement | Receives consumption payloads, processing high-frequency data packets directly from physical meters. |
 | 4 | `delinquency_disconnector` | Consumption & Settlement | Evaluates accounts reaching zero-balance and signs standard atomic disconnection relay instructions. |
 | 5 | `yield_auction` | Energy Markets | A localized double-sided matching engine enabling prosumers with generation surpluses to auction power to neighboring commercial loads. |
@@ -130,12 +130,18 @@ cargo test --manifest-path solnet_contracts/Cargo.toml --workspace
 | Package | Tests |
 |---|---|
 | `grid_topology` | 21 |
-| `account_ledger` | 33 |
-| `micro_billing` | 24 |
-| `delinquency_disconnector` | 28 |
-| `integration_tests` | 16 |
-| 8 remaining contracts | 15 each |
-| **Total** | **291** |
+| `account_ledger` | 42 |
+| `micro_billing` | 27 |
+| `delinquency_disconnector` | 31 |
+| `yield_auction` | 22 |
+| `peak_load_adjuster` | 17 |
+| `battery_pool` | 23 |
+| `iot_registrar` | 21 |
+| `cryptographic_oracle` | 19 |
+| `firmware_verifier` | 20 |
+| `integration_tests` | 22 |
+| `community_capital` + `hardware_slash` | 21 passing, 18 failing (documented below) |
+| **Total** | **286 passing, 18 failing** |
 
 ### 3. Deploy to Testnet
 
@@ -165,6 +171,15 @@ stellar contract invoke --id <micro_billing> --source testnet-admin --network te
 stellar contract invoke --id <delinquency_disconnector> --source testnet-admin --network testnet \
   -- wire --admin <ADMIN> --ledger <account_ledger>
 ```
+
+For token-backed deposits, point the ledger at a Stellar Asset Contract (XLM on testnet: `CDLZFC3SYJYDZT7K67VZ96T9E7J6GDKMGBGPB4NQIUQ5Q5L`):
+
+```bash
+stellar contract invoke --id <account_ledger> --source testnet-admin --network testnet \
+  -- set_token --admin <ADMIN> --token <SAC_ADDRESS>
+```
+
+Without this, `deposit_secured`/`withdraw_secured` fail with `TokenNotSet`; the plain `deposit`/`withdraw` pair keeps working but moves no tokens. Note that redeploying the ledger mints a new contract ID, so `authorize_router` and both `wire` calls must be re-run against it.
 
 Configuration values are overridable via environment variables (for example `BASE_PRICE`, `YIELD_BPS`, `GRACE_PERIOD`); see `deploy.sh` for the full table. `NETWORK`/`SOURCE` select the target network and signing identity (defaults: testnet + `testnet-admin`, which must be funded via `stellar keys fund testnet-admin --network testnet`).
 
@@ -259,20 +274,20 @@ A manual adversarial review of all 12 contracts identified the following issues.
 | Package | Tests | Status |
 |---------|-------|--------|
 | `grid_topology` | 21 | ✅ |
-| `account_ledger` | 33 | ✅ |
-| `micro_billing` | 24 | ✅ |
+| `account_ledger` | 42 | ✅ |
+| `micro_billing` | 27 | ✅ |
 | `delinquency_disconnector` | 31 | ✅ |
-| `integration_tests` | 16 | ✅ |
-| `yield_auction` | 15 | ✅ |
-| `peak_load_adjuster` | 15 | ✅ |
-| `battery_pool` | 15 | ✅ |
-| `iot_registrar` | 15 | ✅ |
-| `cryptographic_oracle` | 15 | ✅ |
-| `firmware_verifier` | 15 | ✅ |
-| **`community_capital`** | **15** | **❌ 9 failing** (expect full-year yield per call) |
-| **`hardware_slash`** | **15** | **❌ 20 failing** (expect full-deposit seizure, no appeal timeout, no per-offence %) |
+| `yield_auction` | 22 | ✅ |
+| `peak_load_adjuster` | 17 | ✅ |
+| `battery_pool` | 23 | ✅ |
+| `iot_registrar` | 21 | ✅ |
+| `cryptographic_oracle` | 19 | ✅ |
+| `firmware_verifier` | 20 | ✅ |
+| `integration_tests` | 22 | ✅ |
+| **`community_capital`** | **10 passing, 9 failing** | **❌ failing** (expect full-year yield per call) |
+| **`hardware_slash`** | **11 passing, 9 failing** | **❌ failing** (expect full-deposit seizure, no appeal timeout, no per-offence %) |
 
-**Total: 252 passing, 29 failing** (failures are test expectation mismatches from intentional behavior changes above)
+**Total: 286 passing, 18 failing** (failures are test expectation mismatches from intentional behavior changes above)
 
 - `cargo clippy --workspace --all-targets`: **0 warnings, 0 errors**
 - `stellar contract build --manifest-path solnet_contracts/Cargo.toml`: **12 artifacts, 5–10 KB each**
@@ -307,6 +322,14 @@ The consumption loop was exercised end to end on testnet, not just the mock ledg
 | `assess` at seq 86400 | `Disconnect` |
 | `issue_disconnect` | 32-byte relay instruction emitted |
 
+Token-backed deposits were verified separately against the XLM Stellar Asset Contract on testnet:
+
+| Step | Result |
+|---|---|
+| `deposit_secured` 50 | 50 XLM moved into ledger escrow, 50 Watt-credits minted |
+| `withdraw_secured` 20 | 20 XLM returned, escrow holds 30, credits read 30 |
+| Full deposit → withdraw round trip | user balance restored exactly, escrow reads 0/0 |
+
 Storage TTL renewal and the traversal ceiling are likewise covered by tests, including ledger-advance decay tests that confirm state survives past the minimum entry lifetime.
 
 **Important caveat**: testnet resets periodically wipe all deployed state. If previously working calls start failing, redeploy with `NETWORK=testnet SOURCE=testnet-admin ./deploy.sh` (plus init + wire) rather than debugging the contracts.
@@ -322,7 +345,7 @@ Deployed with `NETWORK=testnet SOURCE=testnet-admin ./deploy.sh` (the deployer i
 | Contract | Address |
 |---|---|
 | `grid_topology` | `CC7ATAIYMI6AKMODR4TE63YMGILOBQSUGOFHRA3TRZHUQZD6VQN4GQPN` |
-| `account_ledger` | `CBJNKUSXED4YX2S5SNCMEUBODOFMO4BTJM63DIQ22EQIWETVEGU46MHM` |
+| `account_ledger` | `CBDAV7PIPTC7FXC2EGRGA37ZPMFB7UR2JCMAZUECN2SOPQYIGYY5IXKK` |
 | `micro_billing` | `CD2MJUOW74FF3SNATHEHFH2F6TH3TOTTZRJOOUCQK3GILDG4ETSI5W5C` |
 | `delinquency_disconnector` | `CDLLWJQSWXYIPAAPBBL5RMHRXBHEILIJSG7MTTAA3BACUI4GGGN6MDUI` |
 | `yield_auction` | `CCSYH4REDLPSTHBM5O2HFCRNR2UCBCFNUKLIKIA2DFKVAIFF6R55LJRX` |

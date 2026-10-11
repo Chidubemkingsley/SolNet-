@@ -3,7 +3,9 @@
 
 #![no_std]
 
-use soroban_sdk::{contract, contracterror, contractimpl, symbol_short, Address, Env, Symbol};
+use soroban_sdk::{
+    contract, contracterror, contractimpl, symbol_short, Address, Env, IntoVal, Symbol, Val, Vec,
+};
 
 /// Number of decimal places the Watt-credit conversion rate is scaled by.
 /// Mirrors the sub-unit precision of the fiat-pegged stablecoins used by the
@@ -24,6 +26,8 @@ pub enum Error {
     ArithmeticOverflow = 8,
     NotARouter = 9,
     AlreadyARouter = 10,
+    TokenNotSet = 11,
+    TokenTransferFailed = 12,
 }
 
 #[contract]
@@ -232,6 +236,148 @@ impl AccountLedger {
             .persistent()
             .get(&(symbol_short!("rtr"), router))
             .unwrap_or(false)
+    }
+
+    /// Points this ledger at the Stellar Asset Contract whose tokens back the
+    /// secured deposit/withdraw paths. The asset is deliberately generic: on
+    /// testnet this is typically the native XLM SAC, on mainnet a USDC SAC.
+    /// Until this is set, `deposit_secured` and `withdraw_secured` are
+    /// unavailable and fail with `TokenNotSet`. The plain `deposit`/`withdraw`
+    /// pair is intentionally left untouched so existing integrations keep
+    /// working — but note the asymmetry: credits minted by plain `deposit`
+    /// have no backing tokens behind them.
+    pub fn set_token(env: Env, admin: Address, token: Address) -> Result<(), Error> {
+        Self::require_admin_auth(&env, &admin)?;
+        Self::require_configured(&env)?;
+        env.storage().instance().set(&symbol_short!("token"), &token);
+        Self::bump_instance(&env);
+        Ok(())
+    }
+
+    /// The backing token, if one has been configured.
+    pub fn token(env: Env) -> Option<Address> {
+        env.storage().instance().get(&symbol_short!("token"))
+    }
+
+    /// Deposit backed 1:1 by real tokens. Behaves exactly like
+    /// `deposit`, except `amount` of the configured token is pulled from the
+    /// caller into this contract via the token's `transfer` before any state
+    /// is written, so a failed transfer leaves no partial state behind.
+    ///
+    /// Dust is rejected up front: if `amount` is too small to mint at least
+    /// one Watt-credit, the call fails rather than taking tokens for nothing.
+    /// Returns the number of Watt-credits minted.
+    pub fn deposit_secured(
+        env: Env,
+        account: Address,
+        amount: i128,
+    ) -> Result<i128, Error> {
+        let rate = Self::require_configured(&env)?;
+        if amount <= 0 {
+            return Err(Error::InvalidAmount);
+        }
+        account.require_auth();
+        let token: Address = env
+            .storage()
+            .instance()
+            .get(&symbol_short!("token"))
+            .ok_or(Error::TokenNotSet)?;
+
+        let minted = amount.checked_mul(rate).ok_or(Error::ArithmeticOverflow)? / RATE_SCALE;
+        if minted <= 0 {
+            return Err(Error::InvalidAmount);
+        }
+
+        let this = env.current_contract_address();
+        Self::token_transfer(&env, &token, &account, &this, &amount)?;
+
+        let stable = Self::stable_balance_of(&env, &account)
+            .checked_add(amount)
+            .ok_or(Error::ArithmeticOverflow)?;
+        let watts = Self::watt_balance_of(&env, &account)
+            .checked_add(minted)
+            .ok_or(Error::ArithmeticOverflow)?;
+
+        env.storage()
+            .persistent()
+            .set(&(symbol_short!("bal"), account.clone()), &stable);
+        env.storage()
+            .persistent()
+            .set(&(symbol_short!("wat"), account.clone()), &watts);
+        Self::bump(&env, &(symbol_short!("bal"), account.clone()));
+        Self::bump(&env, &(symbol_short!("wat"), account.clone()));
+        Ok(minted)
+    }
+
+    /// Withdraw backed 1:1 by real tokens. Behaves exactly like
+    /// `withdraw`, except the stablecoin payout is pushed from this contract
+    /// to the caller via the token's `transfer` before any state is written.
+    /// Returns the stablecoin amount paid out.
+    pub fn withdraw_secured(
+        env: Env,
+        account: Address,
+        credits: i128,
+    ) -> Result<i128, Error> {
+        let rate = Self::require_configured(&env)?;
+        if credits <= 0 {
+            return Err(Error::InvalidCredits);
+        }
+        account.require_auth();
+        let token: Address = env
+            .storage()
+            .instance()
+            .get(&symbol_short!("token"))
+            .ok_or(Error::TokenNotSet)?;
+
+        let watts = Self::watt_balance_of(&env, &account);
+        if credits > watts {
+            return Err(Error::InsufficientCredits);
+        }
+
+        let amount = credits
+            .checked_mul(RATE_SCALE)
+            .ok_or(Error::ArithmeticOverflow)?
+            / rate;
+        if amount <= 0 {
+            return Err(Error::InvalidCredits);
+        }
+
+        let stable = Self::stable_balance_of(&env, &account);
+        if amount > stable {
+            return Err(Error::InsufficientFunds);
+        }
+
+        let this = env.current_contract_address();
+        Self::token_transfer(&env, &token, &this, &account, &amount)?;
+
+        env.storage()
+            .persistent()
+            .set(&(symbol_short!("bal"), account.clone()), &(stable - amount));
+        env.storage()
+            .persistent()
+            .set(&(symbol_short!("wat"), account.clone()), &(watts - credits));
+        Self::bump(&env, &(symbol_short!("bal"), account.clone()));
+        Self::bump(&env, &(symbol_short!("wat"), account.clone()));
+        Ok(amount)
+    }
+
+    fn token_transfer(
+        env: &Env,
+        token: &Address,
+        from: &Address,
+        to: &Address,
+        amount: &i128,
+    ) -> Result<(), Error> {
+        let mut args: Vec<Val> = Vec::new(env);
+        args.push_back(from.clone().into_val(env));
+        args.push_back(to.clone().into_val(env));
+        args.push_back(amount.clone().into_val(env));
+        let res =
+            env.try_invoke_contract::<Val, Error>(token, &Symbol::new(env, "transfer"), args);
+        match res {
+            Ok(_) => Ok(()),
+            Err(_) => Err(Error::TokenTransferFailed),
+        }
     }
 
     /// Stablecoin balance held by an account, in the smallest currency unit.

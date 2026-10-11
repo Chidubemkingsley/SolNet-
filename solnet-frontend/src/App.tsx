@@ -176,7 +176,8 @@ const useAppState = () => {
 type Item = { path: string; title: string; summary: string; section: string; icon: typeof Gauge; contract?: ContractKey; method?: string; kind?: 'read' | 'write' | 'none' };
 const PAGES: Item[] = [
   { path:'/dashboard', title:'Community dashboard', summary:'Your Watt-credit balance, read live from the deployed account ledger.', section:'Community', icon:Gauge, contract:'account_ledger', method:'watt_balance', kind:'read' },
-  { path:'/payments', title:'Add energy credit', summary:'Deposit stablecoin to mint Watt-credits on the deployed account ledger.', section:'Community', icon:ArrowDownToLine, contract:'account_ledger', method:'deposit', kind:'write' },
+  { path:'/payments', title:'Add energy credit', summary:'Deposit tokens to mint Watt-credits 1:1 on the deployed account ledger. Real tokens move.', section:'Community', icon:ArrowDownToLine, contract:'account_ledger', method:'deposit_secured', kind:'write' },
+  { path:'/withdraw', title:'Withdraw energy credit', summary:'Burn Watt-credits to release the backing tokens to your account.', section:'Community', icon:ArrowUpRight, contract:'account_ledger', method:'withdraw_secured', kind:'write' },
   { path:'/meters', title:'Meters & billing', summary:'Unsettled balance and reading count per account, read live from micro-billing.', section:'Community', icon:Activity, contract:'micro_billing', method:'unsettled', kind:'read' },
   { path:'/emergency', title:'Delinquency assessment', summary:'Assess a live Watt-credit balance for grace-period or disconnect verdict.', section:'Community', icon:ShieldAlert, contract:'delinquency_disconnector', method:'assess', kind:'read' },
   { path:'/topology', title:'Network topology', summary:'Node count, neighbours and reachability reported by the live grid contract.', section:'Operations', icon:Network, contract:'grid_topology', method:'node_count', kind:'read' },
@@ -389,6 +390,7 @@ function OperationalView({ page }: { page: Item }) {
     if (page.path === '/dashboard') return [{name:'account',type:'address' as const,value:account || wallet || ''}];
     if (page.path === '/portfolio') return [{name:'investor',type:'address' as const,value:account || wallet || ''}];
     if (page.path === '/payments') return [{name:'account',type:'address' as const,value:wallet || ''},{name:'amount',type:'i128' as const,value:amount}];
+    if (page.path === '/withdraw') return [{name:'account',type:'address' as const,value:wallet || ''},{name:'credits',type:'i128' as const,value:amount}];
     if (page.path === '/meters') return [{name:'account',type:'address' as const,value:account || wallet || ''}];
     if (page.path === '/emergency') return [{name:'account',type:'address' as const,value:account || wallet || ''},{name:'current_seq',type:'u64' as const,value:seq}];
     if (page.path === '/market') return [{name:'buyer',type:'address' as const,value:account || wallet || ''},{name:'auction_id',type:'u64' as const,value:auctionId},{name:'price',type:'i128' as const,value:hash}];
@@ -434,7 +436,7 @@ function OperationalView({ page }: { page: Item }) {
         {!wallet && <div className="notice" style={{marginBottom:13}}>Connect Freighter to read contract state. Simulation requires a source account and a matching network.</div>}
       {(page.path === '/dashboard' || page.path === '/portfolio' || page.path === '/meters') ? <AddressField label={page.path === '/portfolio' ? 'Investor address' : 'Account address'} value={account} onChange={setAccount} fallback={wallet} testid="input-account-address" /> : null}
         {page.path === '/emergency' && <><AddressField label="Account address" value={account} onChange={setAccount} fallback={wallet} testid="input-account-address" /><TextField label="Current ledger sequence" value={seq} onChange={setSeq} placeholder="Enter current ledger number" testid="input-current-seq" /></>}
-        {page.path === '/payments' && <TextField label="Deposit amount · smallest currency units" value={amount} onChange={setAmount} placeholder="Enter integer amount" testid="input-amount" />}
+        {(page.path === '/payments' || page.path === '/withdraw') && <TextField label={page.path === '/payments' ? 'Deposit amount · token units (moves real tokens)' : 'Credits to burn · releases backing tokens'} value={amount} onChange={setAmount} placeholder="Enter integer amount" testid="input-amount" />}
         {page.path === '/market' && <><TextField label="Auction ID" value={auctionId} onChange={setAuctionId} placeholder="Enter on-chain auction number" testid="input-auction-id" /><TextField label="Bid price per milli-watt-hour · integer" value={hash} onChange={setHash} placeholder="Enter integer price" testid="input-max-price" /></>}
         {(page.path === '/firmware' || page.path === '/devices') && <TextField label="Device public key · 32-byte hex" value={deviceId} onChange={setDeviceId} placeholder="Enter device public key hex" testid="input-device-id" />}
         {page.path === '/devices' && <TextField label="Model bytes · hex" value={hash} onChange={setHash} placeholder="Enter model bytes as hex" testid="input-model-bytes" />}
@@ -466,7 +468,8 @@ function OperationalView({ page }: { page: Item }) {
     </div>
     {page.path === '/dashboard' && <DashboardSecondary />}
     {page.path === '/batteries' && <AuxiliaryRead contractKey="battery_pool" methodName="available" title="Available reserves" />}
-    {page.path === '/payments' && <div className="section-kicker">Deposit flow · stablecoin to energy credit</div>}
+    {page.path === '/payments' && <div className="section-kicker">Deposit flow · tokens move into ledger escrow</div>}
+    {page.path === '/withdraw' && <div className="section-kicker">Withdraw flow · escrowed tokens return to you</div>}
     {page.path === '/campaigns' && <div className="section-kicker">Funding opportunities</div>}
     {page.path === '/incidents' && <div className="section-kicker">Investigation record</div>}
   </div>;
