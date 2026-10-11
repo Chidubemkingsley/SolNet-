@@ -172,42 +172,27 @@ stellar contract invoke --id <delinquency_disconnector> --source testnet-admin -
   -- wire --admin <ADMIN> --ledger <account_ledger>
 ```
 
-For token-backed deposits, point the ledger at a Stellar Asset Contract. The demo
-uses two project-issued test stablecoins — testnet has no USDC/EURC issuer we
-control, and pointing at a stranger's test token would mean trusting their
-issuer. Distinct codes avoid any confusion with the real assets:
+For token-backed deposits, point the ledger at a Stellar Asset Contract. Each
+ledger holds exactly one backing token, so each currency runs on its own
+ledger instance; the billing and disconnection layer is wired per stack:
 
-| Demo asset | Stands in for | Asset | SAC |
-|---|---|---|---|
-| **SNUSD** | USDC | `SNUSD:GAHEPUPXSVVOGY274EKIYZXYFPJORDUOAX6DCYF5KNU6IVUICTTU2J2E` | `CDA5HO4KFC6HI23DJ5RDPQQDGSOFLL3LBFWPQNHUFMQAQT3XX35KGM5J` |
-| **SNEUR** | EURC | `SNEUR:GDLFIT4PVR4P5N7X5PVK55WDYH7RGX4VN2ZA2U4Y65SGGEMTOOXYZWTF` | `CA45FX7O2MKTQIBOAQC2YQCBEK5ZBU3H7FSGRWW5BYVZUAKUW5PUXCGJ` |
-| **USDC** | USDC | `USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5` | `CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA` |
-| **EURC** | EURC | `EURC:GB3Q6QDZYTHWT7E5PVS3W7FUT5GVAFC5KSZFFLPU25GO7VTC3NM2ZTVO` | `CCUUDM434BMZMYWYDITHFXHDMIVTGGD6T2I5UKNX5BSLXLW7HVR4MCGZ` |
+| Currency | Asset | SAC |
+|---|---|---|
+| **USDC** | `USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5` | `CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA` |
+| **EURC** | `EURC:GB3Q6QDZYTHWT7E5PVS3W7FUT5GVAFC5KSZFFLPU25GO7VTC3NM2ZTVO` | `CCUUDM434BMZMYWYDITHFXHDMIVTGGD6T2I5UKNX5BSLXLW7HVR4MCGZ` |
 
-Each ledger holds exactly one backing token, so each currency runs on its own
-ledger instance (`CBSK…MVUW` for SNUSD, `CC2F…4G2` for SNEUR). The billing and
-disconnection layer is currently wired to the SNUSD ledger only — see the
-dual-currency note under Verified On-Chain.
+Both issuers check out on-chain (`centre.io` and `circle.com` home domains).
+The frontend topbar switches the settlement trio between USDC and EURC.
 
 ```bash
 stellar contract invoke --id <account_ledger> --source testnet-admin --network testnet \
-  -- set_token --admin <ADMIN> --token CDA5HO4KFC6HI23DJ5RDPQQDGSOFLL3LBFWPQNHUFMQAQT3XX35KGM5J
+  -- set_token --admin <ADMIN> --token <SAC_ADDRESS>
 ```
 
-To hold SNUSD, an account first needs a trustline, then the issuer mints to it
-(same pattern for SNEUR with `SNEUR:GDLFIT4PVR4P5N7X5PVK55WDYH7RGX4VN2ZA2U4Y65SGGEMTOOXYZWTF`,
-SAC `CA45FX7O2MKTQIBOAQC2YQCBEK5ZBU3H7FSGRWW5BYVZUAKUW5PUXCGJ`, issuer identity `sneur-issuer`):
+To hold a currency, an account first needs a trustline (add it in the wallet),
+then anyone holding it can send it over.
 
-```bash
-stellar tx new change-trust --source-account <USER> \
-  --line SNUSD:GAHEPUPXSVVOGY274EKIYZXYFPJORDUOAX6DCYF5KNU6IVUICTTU2J2E \
-  --network testnet
-stellar contract invoke --id CDA5HO4KFC6HI23DJ5RDPQQDGSOFLL3LBFWPQNHUFMQAQT3XX35KGM5J \
-  --source snusd-issuer --network testnet \
-  -- mint --to <USER> --amount <AMOUNT>
-```
-
-Without this, `deposit_secured`/`withdraw_secured` fail with `TokenNotSet`; the plain `deposit`/`withdraw` pair keeps working but moves no tokens. Note that redeploying the ledger mints a new contract ID, so `authorize_router` and both `wire` calls must be re-run against it.
+Without a configured token, `deposit_secured`/`withdraw_secured` fail with `TokenNotSet`; the plain `deposit`/`withdraw` pair keeps working but moves no tokens. Note that redeploying the ledger mints a new contract ID, so `authorize_router` and both `wire` calls must be re-run against it.
 
 Configuration values are overridable via environment variables (for example `BASE_PRICE`, `YIELD_BPS`, `GRACE_PERIOD`); see `deploy.sh` for the full table. `NETWORK`/`SOURCE` select the target network and signing identity (defaults: testnet + `testnet-admin`, which must be funded via `stellar keys fund testnet-admin --network testnet`).
 
@@ -351,20 +336,18 @@ The consumption loop was exercised end to end on testnet, not just the mock ledg
 | `assess` at seq 86400 | `Disconnect` |
 | `issue_disconnect` | 32-byte relay instruction emitted |
 
-Token-backed deposits were verified end to end against the SNUSD Stellar Asset Contract on testnet (XLM was used only as an interim stand-in while the issuer was set up):
+Token-backed deposits were verified end to end against the real USDC and EURC Stellar Asset Contracts on testnet:
 
 | Step | Result |
 |---|---|
-| `deposit_secured` 100 SNUSD | 100 SNUSD moved into ledger escrow, 100 Watt-credits minted |
-| Billing debit on SNUSD ledger | charge 2, credits 100 → 98 |
-| `withdraw_secured` 48 SNUSD | 48 SNUSD returned, escrow holds 52, credits read 52 |
-| SNEUR round trip (`CC2F…4G2`) | deposit 200 → escrow 200 / admin 4800 / watts 200; full withdraw → escrow 0 / admin 5000 |
+| `deposit_secured` 100 USDC | 100 USDC moved into ledger escrow, 100 Watt-credits minted |
+| Billing debit on USDC ledger | charge 2, credits 100 → 98 |
+| `withdraw_secured` 48 USDC | 48 USDC returned, escrow holds 52, credits read 52 |
+| EURC loop, verified end to end | deposit 60 → escrow 60 → record → 58 → `NotDelinquent` → record → −192 → `GracePeriod` → `Disconnect` at seq 86400 → 32-byte relay instruction |
 
-Euro loop on the SNEUR stack, verified end to end: deposit 60 → escrow 60 →
-record → 58 → `NotDelinquent` → record → −192 → `GracePeriod` → `Disconnect`
-at seq 86400 → 32-byte relay instruction. Each currency is served by its own
-single-currency stack (no multi-token ledger upgrade was needed); the frontend
-topbar switches the settlement trio between SNUSD, SNEUR, USDC, and EURC.
+Each currency is served by its own single-currency stack (no multi-token
+ledger upgrade was needed); the frontend topbar switches the settlement trio
+between USDC and EURC.
 
 Storage TTL renewal and the traversal ceiling are likewise covered by tests, including ledger-advance decay tests that confirm state survives past the minimum entry lifetime.
 
@@ -395,15 +378,15 @@ Deployed with `NETWORK=testnet SOURCE=testnet-admin ./deploy.sh` (the deployer i
 
 Notes: testnet resets periodically wipe state — redeploy with the same command if calls start failing. The frontend resolves these IDs automatically when Testnet is selected in Settings (or via `VITE_CONTRACT_*` overrides; see `solnet-frontend/.env.example`).
 
-### Euro stack (testnet)
+### EURC stack (testnet)
 
-Second settlement trio, wired to the SNEUR token. The other nine contracts above are shared between both currencies.
+Second settlement trio, wired to the EURC token. The other nine contracts above are shared between both currencies.
 
 | Contract | Address |
 |---|---|
-| `account_ledger` | `CC2FLOLU4AGGPQZYNBAKENNRELSXSU56BHFLHMPNXMV6EEIUVCVZI4G2` |
-| `micro_billing` | `CCQ6RBXRTV4PW46PY7NWUKM4RILUL3J6INK3IG4UVLVYONGAVNT2EDSY` |
-| `delinquency_disconnector` | `CBVDIPDZZULUUIUOKC5NUNB76J2LVG4YN5PFDTFMZ3UECMNETFW6542Z` |
+| `account_ledger` | `CBEYQBMOVVON2CYM6BZGNEPHUPQ3MTWRN6KAXQUTKHTIC7W3TSYPIDDB` |
+| `micro_billing` | `CCEBP4NCOOH3H5SO77XGWV3JN7EB4IMPC7CY3SAQCUVL6Q4SJOYEUQPY` |
+| `delinquency_disconnector` | `CCDGMEK3QTW2ZQCRZY6IMXX32JDSNBD4VNY5QFIHLUGQMPAOMKG2DFOA` |
 
 These addresses are also emitted per network by `deploy.sh` (`solnet-frontend/src/lib/deployed-contracts.<network>.ts`) and used as fallbacks in the frontend.
 
@@ -431,7 +414,7 @@ Settlement trio bound to real Circle-issued testnet EURC (`EURC:GB3Q6QDZYTHWT7E5
 
 Verified live: same checks as USDC — token + router confirmed, gate enforced, secured path reaches the real EURC SAC.
 
-The frontend topbar switches the settlement trio between SNUSD, SNEUR, USDC, and EURC; saved custom IDs are preserved except for the three stack keys the switcher owns, and stored IDs never leak across networks or currencies.
+The frontend topbar switches the settlement trio between USDC and EURC; saved custom IDs are preserved except for the three stack keys the switcher owns, and stored IDs never leak across networks or currencies.
 
 ---
 

@@ -12,7 +12,7 @@ import {
 
 export const SETTINGS_STORAGE_KEY = "solnet.protocol.settings.v1";
 
-export type BillingCurrency = "SNUSD" | "SNEUR" | "USDC" | "EURC";
+export type BillingCurrency = "USDC" | "EURC";
 
 export interface SolNetSettings extends StellarConnectionConfig {
   contracts: Record<ContractKey, string>;
@@ -134,7 +134,7 @@ function parseNetwork(value: unknown): StellarNetwork {
 }
 
 function parseCurrency(value: unknown): BillingCurrency {
-  return value === "SNEUR" || value === "USDC" || value === "EURC"
-    ? value
-    : "SNUSD";
+  // Anything unrecognized (including the retired SNUSD/SNEUR values from
+  // older saved settings) falls forward to USDC.
+  return value === "EURC" ? "EURC" : "USDC";
 }

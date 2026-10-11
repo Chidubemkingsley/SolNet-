@@ -328,8 +328,6 @@ function Shell({ page, menuOpen, setMenuOpen, walletError, setWalletError, updat
             (["account_ledger", "micro_billing", "delinquency_disconnector"] as const).forEach(k => { contracts[k] = fresh[k]; });
             updateSettings({ ...settings, currency, contracts });
           }} aria-label="Billing currency" title="Billing currency: which settlement stack the console talks to" data-testid="select-billing-currency">
-            <option value="SNUSD">SNUSD</option>
-            <option value="SNEUR">SNEUR</option>
             <option value="USDC">USDC</option>
             <option value="EURC">EURC</option>
           </select>
