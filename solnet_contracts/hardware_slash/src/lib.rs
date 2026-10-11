@@ -82,7 +82,6 @@ impl HardwareSlash {
         if !(0..=10_000).contains(&slash_bps_gen) || !(0..=10_000).contains(&slash_bps_bypass) {
             return Err(Error::InvalidSlashBps);
         }
-        admin.require_auth();
         env.storage().instance().set(&symbol_short!("admin"), &admin);
         env.storage().instance().set(&symbol_short!("bbps"), &burn_bps);
         env.storage().instance().set(&symbol_short!("sgps"), &slash_bps_gen);

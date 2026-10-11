@@ -12,21 +12,11 @@ export interface SolNetSettings extends StellarConnectionConfig {
   contracts: Record<ContractKey, string>;
 }
 
-// Fallback to deployed contract IDs if env vars not set
-const FALLBACK_CONTRACTS: Record<ContractKey, string> = {
-  grid_topology: DEPLOYED_CONTRACT_IDS.grid_topology,
-  account_ledger: DEPLOYED_CONTRACT_IDS.account_ledger,
-  micro_billing: DEPLOYED_CONTRACT_IDS.micro_billing,
-  delinquency_disconnector: DEPLOYED_CONTRACT_IDS.delinquency_disconnector,
-  yield_auction: DEPLOYED_CONTRACT_IDS.yield_auction,
-  peak_load_adjuster: DEPLOYED_CONTRACT_IDS.peak_load_adjuster,
-  battery_pool: DEPLOYED_CONTRACT_IDS.battery_pool,
-  community_capital: DEPLOYED_CONTRACT_IDS.community_capital,
-  iot_registrar: DEPLOYED_CONTRACT_IDS.iot_registrar,
-  cryptographic_oracle: DEPLOYED_CONTRACT_IDS.cryptographic_oracle,
-  firmware_verifier: DEPLOYED_CONTRACT_IDS.firmware_verifier,
-  hardware_slash: DEPLOYED_CONTRACT_IDS.hardware_slash,
-};
+// Fallback to deployed contract IDs if env vars not set. The fallback set
+// follows the selected network, so switching networks in Settings just works.
+function fallbackContracts(network: StellarNetwork): Record<ContractKey, string> {
+  return { ...(DEPLOYED_CONTRACT_IDS[network] ?? DEPLOYED_CONTRACT_IDS.standalone) };
+}
 
 const ENV_CONTRACTS: Record<ContractKey, string | undefined> = {
   grid_topology: import.meta.env.VITE_CONTRACT_GRID_TOPOLOGY,
@@ -47,10 +37,11 @@ export function getDefaultSettings(): SolNetSettings {
   const network = parseNetwork(import.meta.env.VITE_STELLAR_NETWORK);
   const rpcUrl =
     import.meta.env.VITE_STELLAR_RPC_URL?.trim() || NETWORKS[network].defaultRpcUrl;
+  const fallbacks = fallbackContracts(network);
   const contracts = Object.fromEntries(
     Object.entries(ENV_CONTRACTS).map(([key, value]) => [
       key,
-      value?.trim() ?? FALLBACK_CONTRACTS[key as ContractKey] ?? "",
+      value?.trim() ?? fallbacks[key as ContractKey] ?? "",
     ]),
   ) as Record<ContractKey, string>;
   return {
@@ -66,17 +57,23 @@ export function loadSettings(): SolNetSettings {
     const stored = localStorage.getItem(SETTINGS_STORAGE_KEY);
     if (!stored) return defaults;
     const parsed = JSON.parse(stored) as Partial<SolNetSettings>;
+    const resolvedNetwork = parseNetwork(parsed.network ?? defaults.network);
+    // Stored contract IDs belong to the network they were saved under.
+    // Applying testnet IDs to a standalone session (or vice versa) is exactly
+    // how you end up calling contracts that don't exist there.
+    const storedContracts =
+      parsed.network === resolvedNetwork ? (parsed.contracts ?? {}) : {};
     return {
       ...defaults,
       ...parsed,
-      network: parseNetwork(parsed.network ?? defaults.network),
+      network: resolvedNetwork,
       rpcUrl:
         typeof parsed.rpcUrl === "string" && parsed.rpcUrl.trim()
           ? parsed.rpcUrl.trim()
           : defaults.rpcUrl,
       contracts: {
         ...defaults.contracts,
-        ...(parsed.contracts ?? {}),
+        ...storedContracts,
       },
     };
   } catch {

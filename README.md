@@ -306,7 +306,30 @@ Storage TTL renewal and the traversal ceiling are likewise covered by tests, inc
 
 ---
 
-## 📋 Deployed Contract Addresses (Standalone Network)
+## 📋 Deployed Contract Addresses
+
+### Testnet
+
+Deployed with `NETWORK=testnet SOURCE=testnet-admin ./deploy.sh` (the deployer identity must be funded via `stellar keys fund <identity> --network testnet`). The full consumption loop was verified end to end here: deposit 50 → record → balance 48 → `NotDelinquent` → record → balance −202 → `GracePeriod` → `Disconnect` at the grace boundary → 32-byte relay instruction.
+
+| Contract | Address |
+|---|---|
+| `grid_topology` | `CC7ATAIYMI6AKMODR4TE63YMGILOBQSUGOFHRA3TRZHUQZD6VQN4GQPN` |
+| `account_ledger` | `CBJNKUSXED4YX2S5SNCMEUBODOFMO4BTJM63DIQ22EQIWETVEGU46MHM` |
+| `micro_billing` | `CD2MJUOW74FF3SNATHEHFH2F6TH3TOTTZRJOOUCQK3GILDG4ETSI5W5C` |
+| `delinquency_disconnector` | `CDLLWJQSWXYIPAAPBBL5RMHRXBHEILIJSG7MTTAA3BACUI4GGGN6MDUI` |
+| `yield_auction` | `CCSYH4REDLPSTHBM5O2HFCRNR2UCBCFNUKLIKIA2DFKVAIFF6R55LJRX` |
+| `peak_load_adjuster` | `CDDNBN72BX2DE62T2VVL3DJUCAGI3NX3POKTBZ453QJBAB25TSYUJUVN` |
+| `battery_pool` | `CARI4AYEME4TRBXIOBMRRNTEP6E5LNS7XV7F564WSXOKQ4HXPKICF24K` |
+| `community_capital` | `CANB2BGB3U4OQBHZWJKDPTHEDPE4AWPO64JG6T5IGEHK7W32HHSRSGVV` |
+| `iot_registrar` | `CDIMGSX6HKUDCNYEWE3T2XZHEY4MWHOZWLXVNY54DM5HHNRKB6DL2F3W` |
+| `cryptographic_oracle` | `CAQ6QM3WEABXLV5K7ZR5M7MN5XXEYTUQWRNFUHKJV2N44TUCLVQKMFUK` |
+| `firmware_verifier` | `CBA5T4FOITU4FY4TUFURZPAOB3PT6YIKHNBCOTLTGKJECG2TUKZ5O2P5` |
+| `hardware_slash` | `CDEVK4VD6W5KBTAO7GKYAS67JR7LMTCCTVXLBO4H3TD7GBH4Q6GNSFLN` |
+
+Notes: testnet resets periodically wipe state — redeploy with the same command if calls start failing. The frontend resolves these IDs automatically when Testnet is selected in Settings (or via `VITE_CONTRACT_*` overrides; see `solnet-frontend/.env.example`).
+
+### Standalone
 
 Latest deployment on `stellar/quickstart:future` standalone network:
 

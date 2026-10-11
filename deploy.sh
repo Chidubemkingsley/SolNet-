@@ -9,13 +9,20 @@ echo "========= 🚀 Initializing SolNet Deployment Tool ========="
 # 1. Start a local standalone network in the background if not already running
 # docker run --rm -it -p 8000:8000 stellar/quickstart:latest --standalone --enable-soroban-rpc
 
-# 2. Configure network identifiers
-stellar network add --rpc-url http://localhost:8000/soroban/rpc --network-passphrase "Standalone Network ; February 2017" standalone
+# Network selection: NETWORK=standalone (default) or NETWORK=testnet.
+# SOURCE is the local signing identity; it must be funded on the target network.
+NETWORK="${NETWORK:-standalone}"
+SOURCE="${SOURCE:-admin_account}"
+
+# 2. Configure network identifiers (standalone only; testnet/mainnet are built in)
+if [[ "$NETWORK" == "standalone" ]]; then
+  stellar network add --rpc-url http://localhost:8000/soroban/rpc --network-passphrase "Standalone Network ; February 2017" standalone
+fi
 
 # 3. Create cryptographic keys for administrators
-stellar keys address admin_account >/dev/null 2>&1 || stellar keys generate --network standalone admin_account
-ADMIN_ADDRESS=$(stellar keys address admin_account)
-echo "🎯 Admin Account Initialized: $ADMIN_ADDRESS"
+stellar keys address "$SOURCE" >/dev/null 2>&1 || stellar keys generate --network "$NETWORK" "$SOURCE"
+ADMIN_ADDRESS=$(stellar keys address "$SOURCE")
+echo "🎯 Admin Account Initialized: $ADMIN_ADDRESS (network: $NETWORK)"
 
 # 4. Compile all workspace contracts down to optimized WebAssembly binaries
 echo "📦 Building workspace contracts via Stellar CLI..."
@@ -61,15 +68,15 @@ for c in "${CONTRACTS[@]}"; do
     if [[ -n "${INIT_ARGS[$c]}" ]]; then
         CONTRACT_ID=$(stellar contract deploy \
             --wasm "$WASM_PATH" \
-            --source admin_account \
-            --network standalone \
+            --source "$SOURCE" \
+            --network "$NETWORK" \
             -- \
             init ${INIT_ARGS[$c]} --admin "$ADMIN_ADDRESS" 2>&1 | grep -oE 'C[A-Z0-9]{55}' | tail -1)
     else
         CONTRACT_ID=$(stellar contract deploy \
             --wasm "$WASM_PATH" \
-            --source admin_account \
-            --network standalone \
+            --source "$SOURCE" \
+            --network "$NETWORK" \
             -- \
             init --admin "$ADMIN_ADDRESS" 2>&1 | grep -oE 'C[A-Z0-9]{55}' | tail -1)
     fi
@@ -83,12 +90,14 @@ for c in "${CONTRACTS[@]}"; do
     echo "✅ Deployed $c! ID: $CONTRACT_ID"
 done
 
-# Save contract IDs for frontend
-echo "export const DEPLOYED_CONTRACT_IDS = {" > "$ROOT/solnet-frontend/src/lib/deployed-contracts.ts"
+# Save contract IDs for frontend, per network so deployments don't clobber each other
+OUT="$ROOT/solnet-frontend/src/lib/deployed-contracts.${NETWORK}.ts"
+echo "export const DEPLOYED_CONTRACT_IDS_${NETWORK^^} = {" > "$OUT"
 for c in "${CONTRACTS[@]}"; do
-    echo "  ${c}: \"${DEPLOYED_IDS[$c]}\"," >> "$ROOT/solnet-frontend/src/lib/deployed-contracts.ts"
+    echo "  ${c}: \"${DEPLOYED_IDS[$c]}\"," >> "$OUT"
 done
-echo "} as const;" >> "$ROOT/solnet-frontend/src/lib/deployed-contracts.ts"
+echo "} as const;" >> "$OUT"
+echo "📝 Wrote $OUT"
 
 echo "=================================================="
 echo "🎉 Deployment Successful! All 12 contracts live."
