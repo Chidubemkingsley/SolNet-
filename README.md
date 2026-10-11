@@ -351,6 +351,8 @@ between USDC and EURC.
 
 Demo grid seeded on the shared topology contract (`CC7A…4GQPN`): solar array (node 1) → battery bank (node 4) → two homes (nodes 2–3), plus an isolated distribution relay (node 5, no edges); `node_count` reads 5, `neighbors(4)` reads `[1,2,3]`, `are_connected(1,2)` is true, `are_connected(5,1)` is false (proving the check isn't vacuous), `total_capacity` is 17500 mWh.
 
+Demo funds seeded (all accounting-only, no tokens moved): 1000 contributed to the battery pool (`total_reserve`/`available` read 1000), 5000 invested in the community fund (`total_capital` reads 5000, 5000 shares to testnet-admin). Per-account reads (`shares_of`, balances) are 0 until that account itself transacts — an empty read is correct, not a bug.
+
 Storage TTL renewal and the traversal ceiling are likewise covered by tests, including ledger-advance decay tests that confirm state survives past the minimum entry lifetime.
 
 **Important caveat**: testnet resets periodically wipe all deployed state. If previously working calls start failing, redeploy with `NETWORK=testnet SOURCE=testnet-admin ./deploy.sh` (plus init + wire) rather than debugging the contracts.
