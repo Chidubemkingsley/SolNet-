@@ -2,6 +2,7 @@ use solnet_account_ledger::{AccountLedger, AccountLedgerClient, Error};
 use soroban_sdk::{
     symbol_short,
     testutils::{storage::Instance as _, storage::Persistent as _, Address as _, Ledger as _},
+    token::{StellarAssetClient, TokenClient},
     vec, Address, Env, Symbol,
 };
 
@@ -747,4 +748,42 @@ fn deposit_secured_rejects_dust_below_one_credit() {
     );
     assert_eq!(client.watt_balance(&account), 0);
     assert_eq!(client.stable_balance(&account), 0);
+}
+
+#[test]
+fn plain_deposit_is_disabled_once_a_token_is_configured() {
+    let (e, admin, client) = setup();
+    let token = Address::generate(&e);
+    client.set_token(&admin, &token);
+    let account = Address::generate(&e);
+    // Would otherwise mint unbacked credits that inflate the withdraw gate
+    // against other users' escrow. Must fail with no state change.
+    assert_eq!(
+        client.try_deposit(&account, &100),
+        Err(Ok(Error::UnbackedDisabled))
+    );
+    assert_eq!(client.watt_balance(&account), 0);
+    assert_eq!(client.stable_balance(&account), 0);
+}
+
+#[test]
+fn plain_withdraw_stays_open_with_a_token_configured() {
+    // Burning credits moves no tokens, so it can never drain escrow.
+    // It must stay available: it is the only way to clean up balances
+    // stranded by the pre-gate era.
+    let (e, admin, id, client) = setup_tracked();
+    let sac = e.register_stellar_asset_contract_v2(admin.clone());
+    let token_id = sac.address();
+    let token = StellarAssetClient::new(&e, &token_id);
+    let balances = TokenClient::new(&e, &token_id);
+    client.set_token(&admin, &token_id);
+    let account = Address::generate(&e);
+    token.mint(&account, &1_000);
+    client.deposit_secured(&account, &100);
+    // Plain withdraw burns without paying: escrow must not move.
+    assert_eq!(client.withdraw(&account, &40), 40);
+    assert_eq!(client.watt_balance(&account), 60);
+    assert_eq!(client.stable_balance(&account), 60);
+    assert_eq!(balances.balance(&account), 900);
+    assert_eq!(balances.balance(&id), 100);
 }

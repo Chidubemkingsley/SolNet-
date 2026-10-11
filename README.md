@@ -130,7 +130,7 @@ cargo test --manifest-path solnet_contracts/Cargo.toml --workspace
 | Package | Tests |
 |---|---|
 | `grid_topology` | 21 |
-| `account_ledger` | 42 |
+| `account_ledger` | 44 |
 | `micro_billing` | 27 |
 | `delinquency_disconnector` | 31 |
 | `yield_auction` | 22 |
@@ -141,7 +141,7 @@ cargo test --manifest-path solnet_contracts/Cargo.toml --workspace
 | `firmware_verifier` | 20 |
 | `integration_tests` | 22 |
 | `community_capital` + `hardware_slash` | 21 passing, 18 failing (documented below) |
-| **Total** | **286 passing, 18 failing** |
+| **Total** | **288 passing, 18 failing** |
 
 ### 3. Deploy to Testnet
 
@@ -217,6 +217,7 @@ The following critical issues were discovered during development and fixed befor
 | 6 | `grid_topology` | Unbounded BFS in `are_connected` → instruction budget exhaustion | Configurable `traversal_limit` (default 64, max 4096) with admin override |
 | 7 | `micro_billing` | Rate cached at `wire()` time; stale if ledger ever adds rate setter | Documented assumption (ledger rate immutable); no setter exists |
 | 8 | All contracts | No TTL renewal → state expiration on live ledger | `bump`/`bump_instance` on every write; instance TTL renewed |
+| 9 | `account_ledger` | Plain `deposit` minted unbacked credits against shared escrow — drainable via `withdraw_secured` | `deposit` rejects with `UnbackedDisabled` once a token is set; burn-only `withdraw` stays open for cleanup |
 
 ---
 
@@ -274,7 +275,7 @@ A manual adversarial review of all 12 contracts identified the following issues.
 | Package | Tests | Status |
 |---------|-------|--------|
 | `grid_topology` | 21 | ✅ |
-| `account_ledger` | 42 | ✅ |
+| `account_ledger` | 44 | ✅ |
 | `micro_billing` | 27 | ✅ |
 | `delinquency_disconnector` | 31 | ✅ |
 | `yield_auction` | 22 | ✅ |
@@ -287,7 +288,7 @@ A manual adversarial review of all 12 contracts identified the following issues.
 | **`community_capital`** | **10 passing, 9 failing** | **❌ failing** (expect full-year yield per call) |
 | **`hardware_slash`** | **11 passing, 9 failing** | **❌ failing** (expect full-deposit seizure, no appeal timeout, no per-offence %) |
 
-**Total: 286 passing, 18 failing** (failures are test expectation mismatches from intentional behavior changes above)
+**Total: 288 passing, 18 failing** (failures are test expectation mismatches from intentional behavior changes above)
 
 - `cargo clippy --workspace --all-targets`: **0 warnings, 0 errors**
 - `stellar contract build --manifest-path solnet_contracts/Cargo.toml`: **12 artifacts, 5–10 KB each**
@@ -345,7 +346,7 @@ Deployed with `NETWORK=testnet SOURCE=testnet-admin ./deploy.sh` (the deployer i
 | Contract | Address |
 |---|---|
 | `grid_topology` | `CC7ATAIYMI6AKMODR4TE63YMGILOBQSUGOFHRA3TRZHUQZD6VQN4GQPN` |
-| `account_ledger` | `CBDAV7PIPTC7FXC2EGRGA37ZPMFB7UR2JCMAZUECN2SOPQYIGYY5IXKK` |
+| `account_ledger` | `CCQDZGQH5XEKTD2YEENJ5YI4V77O2ZCYT6CGGX2TGONFMJEV3QJ5OUTS` |
 | `micro_billing` | `CD2MJUOW74FF3SNATHEHFH2F6TH3TOTTZRJOOUCQK3GILDG4ETSI5W5C` |
 | `delinquency_disconnector` | `CDLLWJQSWXYIPAAPBBL5RMHRXBHEILIJSG7MTTAA3BACUI4GGGN6MDUI` |
 | `yield_auction` | `CCSYH4REDLPSTHBM5O2HFCRNR2UCBCFNUKLIKIA2DFKVAIFF6R55LJRX` |

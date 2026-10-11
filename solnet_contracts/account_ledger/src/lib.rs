@@ -28,6 +28,7 @@ pub enum Error {
     AlreadyARouter = 10,
     TokenNotSet = 11,
     TokenTransferFailed = 12,
+    UnbackedDisabled = 13,
 }
 
 #[contract]
@@ -73,6 +74,14 @@ impl AccountLedger {
         let rate = Self::require_configured(&env)?;
         if amount <= 0 {
             return Err(Error::InvalidAmount);
+        }
+        // Once a backing token is configured, unbacked minting is closed:
+        // plain deposits inflate the withdraw gate without escrowing anything,
+        // which would let anyone drain the shared escrow through
+        // `withdraw_secured`. Use `deposit_secured` instead. One-way door —
+        // there is deliberately no unsetter.
+        if Self::token_of(&env).is_some() {
+            return Err(Error::UnbackedDisabled);
         }
         account.require_auth();
 
@@ -256,6 +265,10 @@ impl AccountLedger {
 
     /// The backing token, if one has been configured.
     pub fn token(env: Env) -> Option<Address> {
+        Self::token_of(&env)
+    }
+
+    fn token_of(env: &Env) -> Option<Address> {
         env.storage().instance().get(&symbol_short!("token"))
     }
 
