@@ -194,7 +194,7 @@ export const CONTRACTS: ContractDefinition[] = [
     methods: [
       method("init", "write", [address("admin")]),
       method("admin", "read"),
-      method("register_device", "write", [bytes32("public_key"), bytes("model")]),
+      method("register_device", "write", [bytes32("public_key"), { name: "model", type: "string" as const }]),
       method("revoke", "write", [address("admin"), bytes32("public_key"), bytes("reason")]),
       method("is_registered", "read", [bytes32("public_key")]),
       method("device", "read", [bytes32("public_key")]),
