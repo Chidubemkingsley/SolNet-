@@ -417,7 +417,16 @@ function getTransactionSource(
   if (!StrKey.isValidEd25519PublicKey(address)) {
     throw new Error("Connect a valid Stellar wallet before invoking this contract.");
   }
-  return createSorobanServer(config).getAccount(address);
+  return createSorobanServer(config).getAccount(address).catch((error: unknown) => {
+    if (config.network === "standalone") {
+      const faucet = config.rpcUrl.replace(/\/soroban\/rpc\/?$/, "") + `/friendbot?addr=${address}`;
+      throw new Error(
+        "This account does not exist on the standalone network yet. " +
+          `Fund it first via the local faucet: ${faucet}`,
+      );
+    }
+    throw error instanceof Error ? error : new Error("Could not load the source account.");
+  });
 }
 
 export async function simulateContractRead(input: {
