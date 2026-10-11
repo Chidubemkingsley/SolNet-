@@ -349,6 +349,8 @@ Each currency is served by its own single-currency stack (no multi-token
 ledger upgrade was needed); the frontend topbar switches the settlement trio
 between USDC and EURC.
 
+Demo grid seeded on the shared topology contract (`CC7A…4GQPN`): solar array (node 1) → battery bank (node 4) → two homes (nodes 2–3); `node_count` reads 4, `neighbors(4)` reads `[1,2,3]`, `are_connected(1,2)` is true, `total_capacity` is 16700 mWh.
+
 Storage TTL renewal and the traversal ceiling are likewise covered by tests, including ledger-advance decay tests that confirm state survives past the minimum entry lifetime.
 
 **Important caveat**: testnet resets periodically wipe all deployed state. If previously working calls start failing, redeploy with `NETWORK=testnet SOURCE=testnet-admin ./deploy.sh` (plus init + wire) rather than debugging the contracts.
