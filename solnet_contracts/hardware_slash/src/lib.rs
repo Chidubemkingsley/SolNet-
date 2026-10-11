@@ -94,6 +94,14 @@ impl HardwareSlash {
         Ok(())
     }
 
+    /// Returns the administrator address.
+    pub fn admin(env: Env) -> Result<Address, Error> {
+        env.storage()
+            .instance()
+            .get(&symbol_short!("admin"))
+            .ok_or(Error::NotAdmin)
+    }
+
     /// Posts or tops up a security deposit for a meter operator.
     pub fn deposit_collateral(env: Env, owner: Address, amount: i128) -> Result<(), Error> {
         owner.require_auth();

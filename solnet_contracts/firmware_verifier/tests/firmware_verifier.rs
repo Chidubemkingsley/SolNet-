@@ -395,3 +395,9 @@ fn an_approval_restores_a_decayed_contract_instance() {
     assert_eq!(renewed, max);
     assert!(renewed > decayed);
 }
+
+#[test]
+fn admin_returns_the_init_admin() {
+    let (_e, admin, client) = setup();
+    assert_eq!(client.admin(), admin);
+}

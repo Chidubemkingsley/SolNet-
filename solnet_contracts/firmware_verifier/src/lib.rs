@@ -76,6 +76,14 @@ impl FirmwareVerifier {
         Ok(())
     }
 
+    /// Returns the administrator address.
+    pub fn admin(env: Env) -> Result<Address, Error> {
+        env.storage()
+            .instance()
+            .get(&symbol_short!("admin"))
+            .ok_or(Error::NotAdmin)
+    }
+
     /// Marks a firmware build as community-approved and publishes the minimum
     /// version floor that applies to it. Re-approving the same digest with the
     /// same version is idempotent; re-approving it under a different version is

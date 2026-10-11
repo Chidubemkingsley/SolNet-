@@ -436,3 +436,9 @@ fn a_deposit_restores_a_decayed_contract_instance() {
     assert_eq!(renewed, max);
     assert!(renewed > decayed);
 }
+
+#[test]
+fn admin_returns_the_init_admin() {
+    let (_e, admin, _op, client) = setup(2_500);
+    assert_eq!(client.admin(), admin);
+}

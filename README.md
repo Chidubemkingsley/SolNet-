@@ -377,8 +377,8 @@ Deployed with `NETWORK=testnet SOURCE=testnet-admin ./deploy.sh` (the deployer i
 | `community_capital` | `CANB2BGB3U4OQBHZWJKDPTHEDPE4AWPO64JG6T5IGEHK7W32HHSRSGVV` |
 | `iot_registrar` | `CDIMGSX6HKUDCNYEWE3T2XZHEY4MWHOZWLXVNY54DM5HHNRKB6DL2F3W` |
 | `cryptographic_oracle` | `CAQ6QM3WEABXLV5K7ZR5M7MN5XXEYTUQWRNFUHKJV2N44TUCLVQKMFUK` |
-| `firmware_verifier` | `CBA5T4FOITU4FY4TUFURZPAOB3PT6YIKHNBCOTLTGKJECG2TUKZ5O2P5` |
-| `hardware_slash` | `CDEVK4VD6W5KBTAO7GKYAS67JR7LMTCCTVXLBO4H3TD7GBH4Q6GNSFLN` |
+| `firmware_verifier` | `CAUQBMYO4C5DI22FMJKGNXXWZGENTEQ6QAA4GFQXK53B3FYKEXWTQJRV` |
+| `hardware_slash` | `CCJSSPBHUQPQAS4TK4IZIAPLYG75GE3JL4CT7NBJW3GN4DWUA4G2Z2PP` |
 
 Notes: testnet resets periodically wipe state — redeploy with the same command if calls start failing. The frontend resolves these IDs automatically when Testnet is selected in Settings (or via `VITE_CONTRACT_*` overrides; see `solnet-frontend/.env.example`).
 
