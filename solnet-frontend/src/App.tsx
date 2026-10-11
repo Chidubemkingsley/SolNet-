@@ -375,7 +375,7 @@ function StatusTag({ children, tone = '' }: { children: ReactNode; tone?: string
 }
 
 function OperationalView({ page }: { page: Item }) {
-  const { settings, wallet } = useAppState();
+  const { settings, wallet, network } = useAppState();
   const [meterId, setMeterId] = useState('');
   const [amount, setAmount] = useState('');
   const [deviceId, setDeviceId] = useState('');
@@ -389,6 +389,14 @@ function OperationalView({ page }: { page: Item }) {
   const [entriesHex, setEntriesHex] = useState('');
   const [digestHex, setDigestHex] = useState('');
   const [offence, setOffence] = useState('');
+  useEffect(() => {
+    // The assessment needs a "now" for the grace-window math. Default it to
+    // the latest ledger this app has seen; the user can still override it.
+    // Never overwrites a value the user already typed.
+    if (page.path === '/emergency' && !seq && network) {
+      setSeq(String(network.latestLedger));
+    }
+  }, [page.path, seq, network]);
   const [readResult, setReadResult] = useState<Outcome | null>(null);
   const [busy, setBusy] = useState(false);
   const [review, setReview] = useState(false);
@@ -465,7 +473,7 @@ function OperationalView({ page }: { page: Item }) {
         {contract && <div className="notice neutral" style={{marginBottom:14}}>{contract.description} Interfaces are not independently ABI-verified; only the supplied registry is used.</div>}
         {!wallet && <div className="notice" style={{marginBottom:13}}>Connect Freighter to read contract state. Simulation requires a source account and a matching network.</div>}
       {(page.path === '/dashboard' || page.path === '/portfolio' || page.path === '/meters') ? <AddressField label={page.path === '/portfolio' ? 'Investor address' : 'Account address'} value={account} onChange={setAccount} fallback={wallet} testid="input-account-address" /> : null}
-        {page.path === '/emergency' && <><AddressField label="Account address" value={account} onChange={setAccount} fallback={wallet} testid="input-account-address" /><TextField label="Current ledger sequence" value={seq} onChange={setSeq} placeholder="Enter current ledger number" testid="input-current-seq" /></>}
+        {page.path === '/emergency' && <><AddressField label="Account address" value={account} onChange={setAccount} fallback={wallet} testid="input-account-address" /><TextField label="Current ledger sequence" value={seq} onChange={setSeq} placeholder="Auto-filled from network status" testid="input-current-seq" /></>}
         {(page.path === '/payments' || page.path === '/withdraw') && <TextField label={page.path === '/payments' ? 'Deposit amount · token units (moves real tokens)' : 'Credits to burn · releases backing tokens'} value={amount} onChange={setAmount} placeholder="Enter integer amount" testid="input-amount" />}
         {page.path === '/market' && <><TextField label="Auction ID" value={auctionId} onChange={setAuctionId} placeholder="Enter on-chain auction number" testid="input-auction-id" /><TextField label="Bid price per milli-watt-hour · integer" value={hash} onChange={setHash} placeholder="Enter integer price" testid="input-max-price" /></>}
         {(page.path === '/firmware' || page.path === '/devices') && <TextField label="Device public key · 32-byte hex" value={deviceId} onChange={setDeviceId} placeholder="Enter device public key hex" testid="input-device-id" />}
