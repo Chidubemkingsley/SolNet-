@@ -429,7 +429,7 @@ export function encodeTelemetryEntries(raw: unknown): xdr.ScVal {
     // ScMap keys must be byte-sorted or the host's map.validate() rejects
     // the whole argument ("failed to convert ScVal to host value").
     // Sorted byte order: milli_wh < node_id < recorded_at.
-    const entries: Array<{ name: string; val: unknown }> = [
+    const entries: Array<{ name: string; val: xdr.ScVal }> = [
       { name: "milli_wh", val: nativeToScVal(BigInt(String(record.milli_wh)), { type: "i128" }) },
       { name: "node_id", val: nativeToScVal(nodeId, { type: "u32" }) },
       { name: "recorded_at", val: nativeToScVal(recordedAt, { type: "u64" }) },
