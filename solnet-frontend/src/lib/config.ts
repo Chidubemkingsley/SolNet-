@@ -10,7 +10,10 @@ import {
   type StellarNetwork,
 } from "./helper";
 
-export const SETTINGS_STORAGE_KEY = "solnet.protocol.settings.v1";
+// Bumped to v2: v1 snapshots predate the per-currency stack IDs, so old
+// saves would keep pointing pages at retired contract instances that lack
+// newer entrypoints (e.g. admin()). v1 data is simply ignored, never migrated.
+export const SETTINGS_STORAGE_KEY = "solnet.protocol.settings.v2";
 
 export type BillingCurrency = "USDC" | "EURC";
 
