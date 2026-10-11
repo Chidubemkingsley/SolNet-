@@ -463,6 +463,24 @@ function OperationalView({ page }: { page: Item }) {
     setDeviceId(hex);
     setGenSecret(pair.secret());
   };
+  const [firmwareFileName, setFirmwareFileName] = useState('');
+  const [hashBusy, setHashBusy] = useState(false);
+  const hashFirmwareFile = async (file: File | undefined) => {
+    // Real path to a firmware hash: SHA-256 of the actual binary, computed
+    // locally in the browser. The file never leaves this machine.
+    if (!file) return;
+    setHashBusy(true);
+    setFirmwareFileName(file.name);
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+      setHash(Array.from(digest, byte => byte.toString(16).padStart(2, '0')).join(''));
+    } catch {
+      setReadResult({ kind: 'error', text: 'Could not hash the selected file.' });
+    } finally {
+      setHashBusy(false);
+    }
+  };
   useEffect(() => {
     // The assessment needs a "now" for the grace-window math. Default it to
     // the latest ledger this app has seen; the user can still override it.
@@ -627,6 +645,10 @@ function OperationalView({ page }: { page: Item }) {
         </div>}
         {page.path === '/devices' && <TextField label="Model name · text" value={hash} onChange={setHash} placeholder="e.g. SolMeter v1" testid="input-model-bytes" />}
         {page.path === '/firmware' && <TextField label="Firmware hash · 32-byte hex" value={hash} onChange={setHash} placeholder="Enter exact firmware hash" testid="input-evidence-hash" />}
+        {page.path === '/firmware' && <div style={{marginBottom:14}}>
+          <label className="button ghost" style={{cursor:'pointer',display:'inline-block'}} data-testid="button-hash-firmware-file">{hashBusy ? 'Hashing…' : 'Hash a firmware file'}<input type="file" hidden onChange={e => { void hashFirmwareFile(e.target.files?.[0]); e.target.value = ''; }} /></label>
+          <div className="field-help" style={{marginTop:6}}>{firmwareFileName ? `SHA-256 of ${firmwareFileName}, computed locally — the file never leaves this machine.` : 'No file, no hash: paste a manufacturer-published hash, or hash the binary yourself here.'}</div>
+        </div>}
         {page.path === '/offline-ingestion' && <>
           <div className="row" style={{justifyContent:'flex-start',gap:8,marginBottom:14}}><TextField label="Batch ID · 32-byte hex" value={batchId} onChange={setBatchId} placeholder="Enter batch identifier hex" testid="input-batch-id" /><button className="button ghost" style={{marginTop:18,whiteSpace:'nowrap'}} onClick={randomizeBatchId} data-testid="button-random-batch">Randomize</button></div>
           <div className="field"><label>Entries · JSON array of readings</label><textarea className="textarea mono" value={entriesJson} onChange={e => setEntriesJson(e.target.value)} placeholder="JSON array — edit the prefilled example" rows={5} data-testid="input-entries-json" /><div className="field-help">One row per meter reading: node_id (whole number, see Topology), milli_wh as a decimal string in quotes (large integers lose precision unquoted), recorded_at as a unix timestamp.</div></div>
