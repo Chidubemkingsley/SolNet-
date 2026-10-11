@@ -402,6 +402,30 @@ function OperationalView({ page }: { page: Item }) {
   const [review, setReview] = useState(false);
   const [listings, setListings] = useState<Array<{ id: number; seller: string; energy: string; minPrice: string; cleared: boolean; cancelled: boolean; bids: number }> | null>(null);
   const [browsing, setBrowsing] = useState(false);
+  const [listEnergy, setListEnergy] = useState('');
+  const [listMin, setListMin] = useState('');
+  const [listReview, setListReview] = useState(false);
+  const [listBusy, setListBusy] = useState(false);
+  const [listResult, setListResult] = useState<Outcome | null>(null);
+  const submitListing = async () => {
+    if (!wallet || !isValidContractAddress(contractId)) return;
+    setListBusy(true); setListReview(false); setListResult(null);
+    try {
+      await verifyContractDeployment(contractId, settings);
+      const result = await submitContractTransaction({
+        config: settings, sourceAddress: wallet, contractId, method: 'create_auction',
+        args: [
+          { name: 'seller', type: 'address' as const, value: wallet },
+          { name: 'energy_mwh', type: 'i128' as const, value: listEnergy },
+          { name: 'min_price', type: 'i128' as const, value: listMin },
+        ],
+      });
+      setListResult({ kind: 'tx', text: result.status === 'SUCCESS' ? 'Listing created on-chain. Rescanning…' : 'RPC accepted the listing; it is still pending.', hash: result.hash, status: result.status });
+      if (result.status === 'SUCCESS') void browseAuctions();
+    } catch (error) { setListResult({ kind: 'error', text: error instanceof Error ? error.message : 'Listing was not created.' }); }
+    finally { setListBusy(false); }
+  };
+  const listIncomplete = !listEnergy.trim() || !listMin.trim();
   const browseAuctions = async () => {
     // Auction IDs are dense from 0, so probe upward until the first miss.
     // A network blip also ends the scan; Refresh re-runs it.
@@ -535,11 +559,25 @@ function OperationalView({ page }: { page: Item }) {
     {page.path === '/market' && <section className="card" style={{marginTop:15}}>
       <div className="card-header"><div><h2 className="card-title">Open listings</h2><div className="card-subtitle">Probed live from auction 0 upward; stops at the first missing ID.</div></div><button className="button secondary" disabled={!wallet || !isValidContractAddress(contractId) || browsing} onClick={() => void browseAuctions()} data-testid="button-browse-auctions"><RefreshCw size={13}/>{browsing ? 'Scanning…' : listings ? 'Rescan' : 'Browse listings'}</button></div>
       {!wallet && <div className="field-help">Connect a wallet to use as the simulation source.</div>}
-      {listings && (listings.length === 0 ? <EmptyState title="No listings found">No auctions exist on this contract yet. Create one from Developer tools.</EmptyState> :
+      {listings && (listings.length === 0 ? <EmptyState title="No listings found">No auctions exist on this contract yet. Create the first one below.</EmptyState> :
         <div className="grid" style={{gap:9}}>{listings.map(item => <div key={item.id} style={{borderTop:'1px solid hsl(var(--border))',paddingTop:10}}>
           <div className="row"><div><div className="card-title">Auction #{item.id} · {item.energy} mWh @ min {item.minPrice}</div><div className="field-help mono">seller {item.seller ? shortenAddress(item.seller) : '—'} · {item.bids} bid{item.bids === 1 ? '' : 's'}</div></div><StatusTag tone={item.cancelled ? 'error' : item.cleared ? 'warn' : 'ok'}>{item.cancelled ? 'CANCELLED' : item.cleared ? 'CLEARED' : 'OPEN'}</StatusTag></div>
           <div className="row" style={{marginTop:6}}><span className="field-help">Bidding fills the whole remaining lot at your price.</span>{!item.cleared && !item.cancelled && <button className="button ghost" style={{minHeight:29,padding:'0 8px',fontSize:9}} onClick={() => setAuctionId(String(item.id))} data-testid={`button-use-auction-${item.id}`}>Use this ID</button>}</div>
         </div>)}</div>)}
+    </section>}
+    {page.path === '/market' && <section className="card" style={{marginTop:15}}>
+      <div className="card-header"><div><h2 className="card-title">Create listing</h2><div className="card-subtitle">You are the seller; the cheapest bid takes the whole lot.</div></div><span className="metric-icon"><FileText /></span></div>
+      {!wallet && <div className="field-help" style={{marginBottom:10}}>Connect a wallet — listings are signed as your address.</div>}
+      <TextField label="Energy · milli-watt-hours to sell" value={listEnergy} onChange={setListEnergy} placeholder="Enter integer amount" testid="input-list-energy" />
+      <TextField label="Minimum price per milli-watt-hour · integer" value={listMin} onChange={setListMin} placeholder="Enter integer price" testid="input-list-min-price" />
+      {!listReview ? <button className="button" disabled={!wallet || !isValidContractAddress(contractId) || listIncomplete || listBusy} onClick={() => setListReview(true)} data-testid="button-review-listing">Review listing</button> :
+        <div className="notice neutral" data-testid="panel-listing-review">
+          <b>Confirm this listing</b><div className="divider" />
+          <div className="field-help">Seller · <span className="mono">{wallet}</span></div>
+          <div className="field-help">Energy · <span className="mono">{listEnergy} mWh</span> · Min price · <span className="mono">{listMin}</span></div>
+          <div className="row" style={{justifyContent:'flex-start',marginTop:10}}><button className="button" disabled={listBusy} onClick={() => void submitListing()} data-testid="button-confirm-listing">{listBusy ? 'Awaiting RPC…' : 'Confirm & sign with Freighter'}</button><button className="button ghost" onClick={() => setListReview(false)} data-testid="button-cancel-listing">Cancel</button></div>
+        </div>}
+      {listResult && <div style={{marginTop:12}}>{listResult.kind === 'error' ? <div className="notice error" data-testid="status-listing-error">{listResult.text}</div> : <><div className="notice neutral" data-testid="status-listing-result">{listResult.text}</div>{listResult.hash && <><div className="section-kicker">Transaction hash · {listResult.status}</div><div className="result-box" data-testid="text-listing-hash">{listResult.hash}</div></>}</>}</div>}
     </section>}
     {page.path === '/campaigns' && <div className="section-kicker">Funding opportunities</div>}
     {page.path === '/incidents' && <div className="section-kicker">Investigation record</div>}
