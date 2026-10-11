@@ -129,7 +129,11 @@ export function createSorobanServer(config: StellarConnectionConfig): rpc.Server
   ) {
     throw new Error("Use HTTPS for public networks. HTTP is allowed only for Standalone.");
   }
-  return new rpc.Server(url);
+  // The SDK refuses plain HTTP unless explicitly opted in. Our own check
+  // above already restricts HTTP to standalone networks only.
+  return new rpc.Server(url, {
+    allowHttp: parsedUrl.protocol === "http:",
+  });
 }
 
 export function isValidContractAddress(address: string): boolean {
