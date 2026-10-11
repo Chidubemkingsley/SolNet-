@@ -158,8 +158,10 @@ interface AppState {
   wallet: string | null;
   walletId: string | null;
   walletName: string | null;
+  walletWarning: string | null;
   setWallet: (value: string | null) => void;
   setWalletMeta: (meta: { id: string; name: string } | null) => void;
+  setWalletWarning: (value: string | null) => void;
   network: NetworkStatus | null;
   networkError: string;
   refreshNetwork: () => Promise<void>;
@@ -204,6 +206,7 @@ function App() {
   const [wallet, setWallet] = useState<string | null>(null);
   const [walletId, setWalletId] = useState<string | null>(null);
   const [walletName, setWalletName] = useState<string | null>(null);
+  const [walletWarning, setWalletWarning] = useState<string | null>(null);
   const [network, setNetwork] = useState<NetworkStatus | null>(null);
   const [networkError, setNetworkError] = useState('');
   const [walletError, setWalletError] = useState('');
@@ -232,6 +235,7 @@ function App() {
         setWallet(connected.address);
         setWalletId(connected.walletId);
         setWalletName(connected.walletName);
+        setWalletWarning(connected.networkWarning ?? null);
       })
       .catch(error => { if (active) setWalletError(error instanceof Error ? error.message : 'Could not read wallet connection.'); });
     return () => { active = false; };
@@ -242,7 +246,7 @@ function App() {
     setWalletId(meta?.id ?? null);
     setWalletName(meta?.name ?? null);
   };
-  const context: AppState = { settings, wallet, walletId, walletName, setWallet, setWalletMeta, network, networkError, refreshNetwork };
+  const context: AppState = { settings, wallet, walletId, walletName, walletWarning, setWallet, setWalletMeta, setWalletWarning, network, networkError, refreshNetwork };
   return <QueryClientProvider client={client}><TooltipProvider><WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
     <StateContext.Provider value={context}>
       <RoutedErrorBoundary>
@@ -265,7 +269,7 @@ function Shell({ page, menuOpen, setMenuOpen, walletError, setWalletError, updat
   page: Item; menuOpen: boolean; setMenuOpen: (open: boolean) => void; walletError: string;
   setWalletError: (error: string) => void; updateSettings: (settings: SolNetSettings) => void;
 }) {
-  const { settings, wallet, walletName, setWallet, setWalletMeta, network, networkError, refreshNetwork } = useAppState();
+  const { settings, wallet, walletName, walletWarning, setWallet, setWalletMeta, setWalletWarning, network, networkError, refreshNetwork } = useAppState();
   const [path] = useLocation();
   const [pickerOpen, setPickerOpen] = useState(false);
   const [walletOptions, setWalletOptions] = useState<ISupportedWallet[]>([]);
@@ -283,13 +287,14 @@ function Shell({ page, menuOpen, setMenuOpen, walletError, setWalletError, updat
       const connected: ConnectedWallet = await connectStellarWallet(settings, id);
       setWallet(connected.address);
       setWalletMeta({ id: connected.walletId, name: connected.walletName });
+      setWalletWarning(connected.networkWarning ?? null);
       setPickerOpen(false);
     } catch (error) { setWalletError(error instanceof Error ? error.message : 'Wallet connection failed.'); }
     finally { setConnectingId(null); }
   };
   const disconnect = async () => {
     await disconnectStellarWallet();
-    setWallet(null); setWalletMeta(null); setWalletError('');
+    setWallet(null); setWalletMeta(null); setWalletWarning(null); setWalletError('');
   };
   return <div className="app-shell">
     {menuOpen && <button className="mobile-scrim" aria-label="Close navigation" onClick={() => setMenuOpen(false)} data-testid="button-close-navigation" />}
@@ -336,6 +341,7 @@ function Shell({ page, menuOpen, setMenuOpen, walletError, setWalletError, updat
       </div>}
       <div className="content animate-in" key={path}>
         {walletError && <div className="notice error" data-testid="status-wallet-error" style={{marginBottom:14}}>{walletError}</div>}
+        {walletWarning && <div className="notice" data-testid="status-wallet-network-warning" style={{marginBottom:14}}>{walletWarning}</div>}
         {networkError && <div className="notice neutral row" data-testid="status-rpc-error" style={{marginBottom:14}}><span>{networkError}</span><button className="button ghost" onClick={() => void refreshNetwork()} data-testid="button-rpc-retry"><RefreshCw size={13} />Retry RPC</button></div>}
         {page.path === '/settings' ? <SettingsView updateSettings={updateSettings} /> :
           page.path === '/developer-tools' ? <DeveloperView /> : page.path === '/audit' ? <AuditView /> :

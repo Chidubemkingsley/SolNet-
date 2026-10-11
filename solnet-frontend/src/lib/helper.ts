@@ -175,6 +175,7 @@ export interface ConnectedWallet {
   address: string;
   walletId: string;
   walletName: string;
+  networkWarning?: string;
 }
 
 export const WALLET_STORAGE_KEY = "solnet.wallet.v1";
@@ -279,11 +280,15 @@ export async function connectStellarWallet(
   if (!address) {
     throw new Error("The selected wallet did not return a public address.");
   }
-  await assertWalletNetwork(config);
+  // Deliberately not blocking here: reads need no signing, and not every
+  // wallet can report its network. The mismatch (if any) is surfaced as a
+  // warning, and writes still enforce it before anything is signed.
+  const networkWarning = await probeWalletNetwork(config);
   const connected: ConnectedWallet = {
     address,
     walletId,
     walletName: walletDisplayName(walletId),
+    ...(networkWarning ? { networkWarning } : {}),
   };
   storeWallet(connected);
   return connected;
@@ -321,6 +326,37 @@ export async function disconnectStellarWallet(): Promise<void> {
   }
 }
 
+function walletNetworkMismatchMessage(config: StellarConnectionConfig): string {
+  const expected = getNetworkPassphrase(config);
+  const base =
+    `The connected wallet is on a different network than this app (expected passphrase "${expected}"). ` +
+    `Reads still work, but signing will fail until the wallet matches.`;
+  if (config.network !== "standalone") {
+    return `${base} Switch the wallet to ${NETWORKS[config.network].label} before signing.`;
+  }
+  return (
+    `${base} In Freighter: open Settings → Networks → add a custom network with ` +
+    `Name "Standalone", URL "http://localhost:8000/soroban/rpc", passphrase ` +
+    `"Standalone Network ; February 2017", Allow HTTP connection enabled — then switch to it. ` +
+    `Other wallets must likewise be set to that exact passphrase.`
+  );
+}
+
+async function probeWalletNetwork(
+  config: StellarConnectionConfig,
+): Promise<string | null> {
+  const expected = getNetworkPassphrase(config);
+  let reported: string;
+  try {
+    const network = await StellarWalletsKit.getNetwork();
+    reported = network.networkPassphrase;
+  } catch {
+    return null;
+  }
+  if (!reported || reported === expected) return null;
+  return walletNetworkMismatchMessage(config);
+}
+
 export async function assertWalletNetwork(
   config: StellarConnectionConfig,
 ): Promise<void> {
@@ -336,9 +372,7 @@ export async function assertWalletNetwork(
     return;
   }
   if (reported !== expected) {
-    throw new Error(
-      `The connected wallet is on a different network. Switch it to ${NETWORKS[config.network].label} before continuing.`,
-    );
+    throw new Error(walletNetworkMismatchMessage(config));
   }
 }
 
