@@ -385,7 +385,9 @@ function OperationalView({ page }: { page: Item }) {
   const [seq, setSeq] = useState('');
   const [auctionId, setAuctionId] = useState('');
   const [batchId, setBatchId] = useState('');
-  const [entriesJson, setEntriesJson] = useState('');
+  const [entriesJson, setEntriesJson] = useState(
+    '[\n  {"node_id": 1, "milli_wh": "250", "recorded_at": 1700000000},\n  {"node_id": 2, "milli_wh": "100", "recorded_at": 1700000060}\n]',
+  );
   const [digestHex, setDigestHex] = useState('');
   const [digestBusy, setDigestBusy] = useState(false);
   const [digestError, setDigestError] = useState('');
@@ -626,7 +628,7 @@ function OperationalView({ page }: { page: Item }) {
         {page.path === '/firmware' && <TextField label="Firmware hash · 32-byte hex" value={hash} onChange={setHash} placeholder="Enter exact firmware hash" testid="input-evidence-hash" />}
         {page.path === '/offline-ingestion' && <>
           <div className="row" style={{justifyContent:'flex-start',gap:8,marginBottom:14}}><TextField label="Batch ID · 32-byte hex" value={batchId} onChange={setBatchId} placeholder="Enter batch identifier hex" testid="input-batch-id" /><button className="button ghost" style={{marginTop:18,whiteSpace:'nowrap'}} onClick={randomizeBatchId} data-testid="button-random-batch">Randomize</button></div>
-          <div className="field"><label>Entries · JSON array of readings</label><textarea className="textarea mono" value={entriesJson} onChange={e => setEntriesJson(e.target.value)} placeholder='[{"node_id":1,"milli_wh":"250","recorded_at":1700000000}]' rows={4} data-testid="input-entries-json" /><div className="field-help">Each row needs node_id, milli_wh (decimal string) and recorded_at. Encoded as structs on submit — never as raw bytes.</div></div>
+          <div className="field"><label>Entries · JSON array of readings</label><textarea className="textarea mono" value={entriesJson} onChange={e => setEntriesJson(e.target.value)} placeholder="JSON array — edit the prefilled example" rows={5} data-testid="input-entries-json" /><div className="field-help">One row per meter reading: node_id (whole number, see Topology), milli_wh as a decimal string in quotes (large integers lose precision unquoted), recorded_at as a unix timestamp.</div></div>
           <div className="row" style={{justifyContent:'flex-start',gap:8,marginBottom:14}}><div style={{flex:1}}><TextField label="Digest · 32-byte hex" value={digestHex} onChange={setDigestHex} placeholder="Computed from the entries above" testid="input-digest-hex" /></div><button className="button secondary" style={{marginTop:18,whiteSpace:'nowrap'}} disabled={!wallet || !isValidContractAddress(contractId) || digestBusy || !entriesJson.trim()} onClick={() => void computeBatchDigest(contractId, wallet!)} data-testid="button-compute-digest">{digestBusy ? 'Computing…' : 'Compute digest'}</button></div>
           {digestError && <div className="notice error" style={{marginBottom:12}} data-testid="status-digest-error">{digestError}</div>}
         </>}
