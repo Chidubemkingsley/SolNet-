@@ -149,6 +149,36 @@ chmod +x deploy.sh
 
 Configuration values are overridable via environment variables (for example `BASE_PRICE`, `YIELD_BPS`, `GRACE_PERIOD`); see `deploy.sh` for the full table.
 
+### 4. Connect a Wallet to the Standalone Network
+
+The frontend (`solnet-frontend`, `npm run dev`) supports Freighter, Albedo, xBull, Rabet, Lobstr, and Hana via a wallet picker. Reads need no signing; writes are signed in the wallet. For the local node, the wallet must be set to the standalone network — otherwise every write fails at signing time.
+
+**Freighter setup for standalone** (Settings → Networks → add custom network):
+
+| Field | Value |
+|---|---|
+| Name | `Standalone` |
+| URL | `http://localhost:8000/soroban/rpc` |
+| Passphrase | `Standalone Network ; February 2017` |
+| Allow HTTP connection | Enabled |
+
+Then switch to it, and fund the account from the local faucet:
+
+```bash
+curl "http://localhost:8000/friendbot?addr=<YOUR_ADDRESS>"
+```
+
+Disconnect and reconnect in the app afterwards — the network check runs at connect time. Other wallets must likewise be set to that exact passphrase.
+
+**Troubleshooting — every error below was hit for real during development, in this order:**
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `MissingValue: trying to get non-existing value for contract instance` | App pointed at testnet (the default when no `.env` exists); our contract IDs don't exist there | Settings → Network → Standalone, or set `VITE_STELLAR_NETWORK=standalone` (see `solnet-frontend/.env.example`) |
+| `Cannot connect to insecure Soroban RPC server if allowHttp isn't set` | The Stellar SDK blocks plain HTTP unless opted in | Fixed in code (`allowHttp` on standalone only); pull latest |
+| `Account not found: <address>` on reads | Wallet account was created elsewhere and doesn't exist on the local ledger | Fund it via the friendbot URL above |
+| `The connected wallet is on a different network…` | Wallet set to testnet/mainnet; reads still work, signing is blocked | Add the standalone custom network per the table above, switch to it, reconnect |
+
 ---
 
 ## ⚠️ Critical Bug Fixes Applied
